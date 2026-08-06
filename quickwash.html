@@ -3850,7 +3850,10 @@ function updateLiveFeed(det){
   card.className='det-card';
   card.style.cssText='animation:tin .25s ease;border-left:3px solid '+confColor+';margin-bottom:8px';
   card.innerHTML=`<div class="row aic jb">
-    <div><div class="det-plate">${det.plate}</div><div style="font-size:10px;color:var(--ink3);margin-top:2px">${det.camName} · ${ftm(det.at)}</div></div>
+    <div><div class="det-plate">${det.plate}</div>
+    <div style="font-size:10px;color:var(--ink3);margin-top:2px">${det.camName} · ${ftm(det.at)}</div>
+    ${det.brand||det.model||det.colour?`<div style="font-size:10px;color:var(--blue);font-weight:600;margin-top:2px">${[det.brand,det.model,det.colour].filter(Boolean).join(' · ')}</div>`:''}
+    </div>
     <div style="text-align:right"><span class="bx ${activeJob?'bw':'bok'}">${activeJob?'Active Job':'New'}</span><div style="font-size:10px;color:${confColor};font-weight:700;margin-top:3px">${det.conf}% conf.</div></div>
   </div>
   <div style="background:var(--line);height:3px;border-radius:2px;margin-top:7px"><div style="background:${confColor};height:100%;width:${det.conf}%;border-radius:3px"></div></div>
@@ -4662,12 +4665,50 @@ const _origRunScan = window.runScan;
 window.runScan = async function(cam, silent = false) {
   if (!cam || !cam.enabled) return;
 
-  // Keep local simulation for demo mode
-  const knownPlates = S.customers.flatMap(c => c.plates || []);
-  const randomPlates = ['MH01XY9876','GJ05AB3210','UP32CD5566','RJ14EF7788'];
-  const pool  = [...knownPlates, ...randomPlates];
-  const plate = pool[Math.floor(Math.random() * pool.length)];
-  const conf  = Math.round(72 + Math.random() * 27);
+  const provider = CFG.anprProvider || 'demo';
+
+  // ── REAL CAMERA MODE ────────────────────────────────────────
+  // Call actual ANPR API to get plate from live camera feed
+  if (provider !== 'demo') {
+    try {
+      const result = await sbCallANPR(cam, provider);
+      if (!result) { updateCamPulse(cam.id, 'amber'); return; } // No vehicle in frame
+
+      const { plate, conf, brand, model, colour } = result;
+
+      if (conf < (CFG.cctvMinConf || 75)) {
+        if (!silent) toast('📷 ' + cam.name + ': low confidence (' + conf + '%), skipped', 'w');
+        updateCamPulse(cam.id, 'amber');
+        return;
+      }
+
+      // Dedup check
+      const dedupMs = (CFG.cctvDedupMins || 5) * 60 * 1000;
+      const dup = S.detections.find(d =>
+        d.plate === plate && d.camId === cam.id && (Date.now() - new Date(d.at)) < dedupMs);
+      if (dup) { updateCamPulse(cam.id, 'blue'); return; }
+
+      await sbRecordDetection(cam, plate, conf, silent, brand, model, colour);
+
+    } catch(err) {
+      console.warn('[CCTV] API call failed for ' + cam.name + ':', err.message);
+      updateCamPulse(cam.id, 'amber');
+      if (!silent) toast('📷 ' + cam.name + ': connection failed', 'e');
+    }
+    return;
+  }
+
+  // ── DEMO MODE ────────────────────────────────────────────────
+  // Only runs when Admin → CCTV Settings → Provider = Demo/Simulation
+  // Uses known customer plates only — NO random plates
+  const knownPlates = S.customers.flatMap(c => c.plates || []).filter(Boolean);
+  if (!knownPlates.length) {
+    if (!silent) toast('📷 Demo mode: no customer plates in database yet', 'w');
+    return;
+  }
+
+  const plate = knownPlates[Math.floor(Math.random() * knownPlates.length)];
+  const conf  = Math.round(82 + Math.random() * 17); // 82–99% in demo
 
   if (conf < (CFG.cctvMinConf || 75)) { updateCamPulse(cam.id, 'amber'); return; }
 
@@ -4676,20 +4717,133 @@ window.runScan = async function(cam, silent = false) {
     d.plate === plate && d.camId === cam.id && (Date.now() - new Date(d.at)) < dedupMs);
   if (dup) { updateCamPulse(cam.id, 'blue'); return; }
 
+  await sbRecordDetection(cam, plate, conf, silent);
+};
+
+// ── Real ANPR API caller ─────────────────────────────────────
+async function sbCallANPR(cam, provider) {
+  const apiKey   = CFG.anprApiKey  || cam.apiKey  || '';
+  const endpoint = CFG.anprEndpoint || cam.ip      || '';
+  const region   = CFG.anprRegion  || 'in';
+
+  if (provider === 'platerecognizer') {
+    // Plate Recognizer API — https://platerecognizer.com
+    // Fetches JPEG snapshot from camera IP then sends to PR API
+    const formData = new FormData();
+    formData.append('regions', region);
+
+    // Fetch snapshot from camera (requires camera IP to serve JPEG)
+    const snapUrl = `http://${endpoint}/Streaming/Channels/1/picture`; // Hikvision format
+    const snapResp = await fetch(snapUrl, { signal: AbortSignal.timeout(3000) });
+    if (!snapResp.ok) throw new Error('Camera snapshot failed');
+    const blob = await snapResp.blob();
+    formData.append('upload', blob, 'frame.jpg');
+
+    const resp = await fetch('https://api.platerecognizer.com/v1/plate-reader/', {
+      method: 'POST',
+      headers: { 'Authorization': 'Token ' + apiKey },
+      body: formData,
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!resp.ok) throw new Error('Plate Recognizer API error: ' + resp.status);
+    const data = await resp.json();
+
+    if (!data.results?.length) return null; // No plate in frame
+
+    const best = data.results[0];
+    return {
+      plate:  best.plate.toUpperCase(),
+      conf:   Math.round((best.score || 0) * 100),
+      brand:  best.vehicle?.make?.name || null,
+      model:  best.vehicle?.model?.name || null,
+      colour: best.vehicle?.color?.[0]?.name || null,
+    };
+  }
+
+  if (provider === 'openalpr') {
+    // OpenALPR Cloud API — https://www.openalpr.com
+    const snapUrl = `http://${endpoint}/Streaming/Channels/1/picture`;
+    const snapResp = await fetch(snapUrl, { signal: AbortSignal.timeout(3000) });
+    if (!snapResp.ok) throw new Error('Camera snapshot failed');
+    const arrayBuffer = await snapResp.arrayBuffer();
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+
+    const resp = await fetch(
+      `https://api.openalpr.com/v3/recognize_bytes?recognize_vehicle=1&country=${region}&secret_key=${apiKey}`,
+      { method: 'POST', body: base64, signal: AbortSignal.timeout(5000) }
+    );
+    if (!resp.ok) throw new Error('OpenALPR API error: ' + resp.status);
+    const data = await resp.json();
+
+    if (!data.results?.length) return null;
+    const best = data.results[0];
+    return {
+      plate:  best.plate.toUpperCase(),
+      conf:   Math.round(best.confidence || 0),
+      brand:  best.vehicle?.make?.[0]?.name || null,
+      model:  best.vehicle?.body_type?.[0]?.name || null,
+      colour: best.vehicle?.color?.[0]?.name || null,
+    };
+  }
+
+  if (provider === 'hikvision') {
+    // Hikvision ANPR event API (iVMS ANPR channel)
+    const resp = await fetch(
+      `http://${endpoint}/ISAPI/Traffic/channels/1/vehicleDetect/plates`,
+      {
+        headers: { 'Authorization': 'Basic ' + btoa('admin:' + apiKey) },
+        signal: AbortSignal.timeout(4000)
+      }
+    );
+    if (!resp.ok) throw new Error('Hikvision API error: ' + resp.status);
+    const text = await resp.text();
+    // Parse XML response
+    const plateMatch = text.match(/<licensePlate>([^<]+)<\/licensePlate>/);
+    const confMatch  = text.match(/<confidence>([^<]+)<\/confidence>/);
+    if (!plateMatch) return null;
+    return {
+      plate: plateMatch[1].toUpperCase(),
+      conf:  confMatch ? parseInt(confMatch[1]) : 90,
+      brand: null, model: null, colour: null
+    };
+  }
+
+  if (provider === 'webhook') {
+    // Custom webhook — camera POSTs detections to your endpoint, we poll it
+    const resp = await fetch(CFG.anprEndpoint, {
+      headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(4000)
+    });
+    if (!resp.ok) throw new Error('Webhook poll error: ' + resp.status);
+    const data = await resp.json();
+    if (!data.plate) return null;
+    return {
+      plate:  data.plate.toUpperCase(),
+      conf:   data.confidence || data.conf || 90,
+      brand:  data.brand || data.make || null,
+      model:  data.model || null,
+      colour: data.colour || data.color || null,
+    };
+  }
+
+  throw new Error('Unknown ANPR provider: ' + provider);
+}
+
+// ── Save detection to Supabase and update UI ─────────────────
+async function sbRecordDetection(cam, plate, conf, silent, brand, model, colour) {
   const activeJob = S.sl.find(l => l.plate === plate && !['delivered','cancelled'].includes(l.status));
   try {
-    // Save to Supabase
     const saved = await QB.saveDetection({
       plate, camera_id: cam.id, camera_name: cam.name,
       location: cam.location, confidence: conf
     });
-    // Update camera ping
     await QB.updateCameraPing(cam.id);
 
     const det = {
       id: saved.id, plate, camId: cam.id, camName: cam.name,
-      location: cam.location, conf, status: 'detected',
-      logId: activeJob?.id || null, at: saved.detected_at, duplicate: false
+      location: cam.location, conf, brand, model, colour,
+      status: 'detected', logId: activeJob?.id || null,
+      at: saved.detected_at, duplicate: false
     };
     S.detections.unshift(det);
     updateCamPulse(cam.id, 'green');
@@ -4697,17 +4851,19 @@ window.runScan = async function(cam, silent = false) {
     if (el('live-det-feed')) updateLiveFeed(det);
 
     if (activeJob) {
-      toast('📷 ' + plate + ' — ⚠ Active job in progress', 'w');
+      toast('📷 ' + plate + ' — ⚠ Active job #' + String(activeJob.id).slice(-6), 'w');
     } else {
-      toast('📷 ANPR: ' + plate + ' detected (' + conf + '%)', 'ok');
+      // Show brand/model/colour if detected
+      const extra = [brand, model, colour].filter(Boolean).join(' · ');
+      const msg = '📷 ' + plate + ' (' + conf + '%)' + (extra ? ' — ' + extra : '');
+      toast(msg, 'ok');
       if (!silent) showDetAlert(det);
+      if (CFG.cctvAutoEntry) detToVehicleEntry(plate);
     }
   } catch(err) {
-    // Fallback to local if DB save fails
-    console.warn('[CCTV] DB save failed, using local:', err.message);
-    _origRunScan?.(cam, silent);
+    console.warn('[CCTV] Detection save failed:', err.message);
   }
-};
+}
 
 // ── OVERRIDE: Ignore/Restore detection ───────────────────────
 const _origIgnoreDet = window.ignoreDet;
