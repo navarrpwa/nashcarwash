@@ -1798,7 +1798,43 @@ function completeEntry(){
   if(S.W.custId){const c=S.customers.find(x=>x.id===S.W.custId);if(c){c.visits++;c.totalSpent+=tot;c.lastVisit=now;c.points=Math.max(0,(c.points||0)-S.W.ptsRedeem)+pts;if(!c.plates.includes(S.W.plate))c.plates.push(S.W.plate);c.loyaltyHistory=c.loyaltyHistory||[];c.loyaltyHistory.push({date:now,action:'earned',pts,total:tot});if(S.W.ptsRedeem>0)c.loyaltyHistory.push({date:now,action:'redeemed',pts:S.W.ptsRedeem,total:tot});checkVisitRewards(c);}}
   showEntryReceipt(entry);resetWiz();
   toast('✓ Entry saved! Car added to wash queue','ok');
-}
+
+  // ── Save to Supabase if connected ────────────────────────────
+  if(typeof QB !== 'undefined' && sbGetToken()) {
+    (async()=>{
+      try{
+        const vtRow = S._vtypes?.find(vt=>vt.code===S.W.vtype);
+        const vcRow = vtRow?.vehicle_categories?.find(vc=>vc.name===S.W.vcat);
+        const svcDetails = (S.W.svcs||[]).map(x=>{
+          const svc=S.washSvcs.find(s=>s.id===x.id);
+          const price=svc?(svc.prices?.[S.W.vcat]||svc.basePrice):0;
+          return{service_id:svc?.id||null,service_name:svc?.name||x.id,price,qty:1};
+        });
+        const payload={
+          plate:entry.plate, model:entry.model||'',
+          vehicle_type_id:vtRow?.id||null, vehicle_cat_id:vcRow?.id||null,
+          customer_id:entry.custId||null,
+          amount:entry.amount, discount:entry.disc||0,
+          pay_method:entry.pay, paid:entry.paid,
+          pts_earned:pts, pts_redeemed:S.W.ptsRedeem||0,
+          estimated_mins:0, staff_name:entry.staff, notes:entry.notes||'',
+          services:svcDetails,
+          payment_details:entry.payDetail||[{method:entry.pay,amount:entry.amount}]
+        };
+        const result = await QB.createServiceEntry(payload);
+        // Update local entry with real DB id
+        entry._dbId = result.log_id;
+        entry.jobNumber = result.job_number;
+        entry.invoiceNo = result.invoice_no;
+        console.log('[QuickWash] ✅ Saved to Supabase:', result.job_number);
+        toast('☁ Synced to database ✓','ok');
+      }catch(err){
+        console.error('[QuickWash] ❌ Supabase save failed:', err.message);
+        toast('⚠ Not synced to DB: '+err.message,'e');
+      }
+    })();
+  }
+} // end completeEntry
 function checkVisitRewards(cust){
   CFG.visitRewards.filter(r=>r.active).forEach(r=>{if(cust.visits===r.visits){toast('🎁 '+cust.name+' earned: '+r.reward,'ok');}});
 }
@@ -1940,6 +1976,13 @@ function slAdv(id,status){
     if(CFG.sms.enabled&&CFG.sms.autoSendOnComplete&&cust_for_log(l)?.phone) sendSMS(id,true);
   }
   toast(LOG_LABELS[status]+' ✓','ok');renderSL();
+
+  // ── Sync to Supabase ──────────────────────────────────────
+  const dbId = l._dbId || (typeof l.id === 'string' && l.id.length > 10 ? l.id : null);
+  if(typeof QB!=='undefined' && sbGetToken() && dbId){
+    QB.advanceLogStatus(dbId, status)
+      .catch(err=>console.error('[QuickWash] Status sync failed:',err.message));
+  }
 }
 
 // ── Editable Service Log modal ──
@@ -2130,6 +2173,17 @@ function saveSlPayment(id,total){
   // Show receipt
   openSlReceipt(id);
   renderSL();
+
+  // ── Sync payment to Supabase ────────────────────────────────
+  const dbId = l._dbId || (typeof l.id==='string'&&l.id.length>10?l.id:null);
+  if(typeof QB!=='undefined'&&sbGetToken()&&dbId){
+    QB.recordPayment({
+      log_id: dbId, pay_method: methods.join('+'),
+      payment_details: payDetail,
+      pts_earned: CFG.loyaltyEnabled?Math.floor(total*CFG.pointsPerRupee):0
+    }).then(()=>console.log('[QuickWash] ✅ Payment synced to DB'))
+      .catch(err=>console.error('[QuickWash] ❌ Payment sync failed:',err.message));
+  }
 }
 
 // ── Receipt ──
@@ -4163,8 +4217,7 @@ document.addEventListener('DOMContentLoaded',()=>{if(el('sl-dt'))el('sl-dt').val
 // Overrides all demo functions with live Supabase equivalents
 // ============================================================
 
-// ── BOOT: Replace doLogin with Supabase auth ──────────────────
-const _origDoLogin = window.doLogin;
+// ── BOOT: doLogin with Supabase + local fallback ──────────────
 window.doLogin = async function() {
   const email = el('ie')?.value?.trim();
   const pass  = el('ip')?.value;
@@ -4173,33 +4226,71 @@ window.doLogin = async function() {
   const btn = document.querySelector('.lbtn');
   if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
 
+  let sbOk = false;
+
+  // ── Try Supabase auth ──────────────────────────────────────
   try {
-    QB.loading('Authenticating…');
-    const result = await QB.login(email, pass);
-    QB.doneLoading();
-
-    QB.setCurrentUser(result.user);
-    S.user = { id: result.user.id, name: result.user.name,
-               email: result.user.email, role: result.user.role };
-
-    // Load everything from Supabase
-    await sbBootstrapApp();
-
-    el('app').classList.add('on');
-    el('lw').style.display = 'none';
-    startCCTVAutoScan();
-    rdash();
-    toast('Welcome, ' + result.user.name.split(' ')[0] + '! 👋', 'ok');
-
-    // Subscribe to realtime
-    sbSetupRealtime();
-
+    if (_sb) {
+      QB.loading('Connecting to database…');
+      const result = await QB.login(email, pass);
+      QB.doneLoading();
+      QB.setCurrentUser(result.user);
+      S.user = { id: result.user.id, name: result.user.name,
+                 email: result.user.email, role: result.user.role };
+      sbOk = true;
+    }
   } catch(err) {
     QB.doneLoading();
-    QB.error(err, err.message || 'Login failed');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Sign In →'; }
+    console.warn('[QuickWash] Supabase auth failed:', err.message);
   }
+
+  // ── Local auth fallback ────────────────────────────────────
+  if (!sbOk) {
+    const u = USERS.find(x => x.email === email && x.pw === pass);
+    if (!u) {
+      toast('Wrong credentials', 'e');
+      if (btn) { btn.disabled = false; btn.textContent = 'Sign In →'; }
+      return;
+    }
+    S.user = u;
+    toast('⚠ Offline mode — data will not be saved to database', 'w');
+  }
+
+  // ── Load live data or use local ────────────────────────────
+  if (sbOk) {
+    try {
+      QB.loading('Loading data…');
+      await sbBootstrapApp();
+      QB.doneLoading();
+    } catch(err) {
+      QB.doneLoading();
+      console.warn('[QuickWash] Bootstrap failed:', err.message);
+      initSvcPrices();
+      toast('⚠ DB load failed — using local data', 'w');
+    }
+  } else {
+    initSvcPrices();
+  }
+
+  // ── Show app ───────────────────────────────────────────────
+  const u = S.user;
+  el('lw').style.display = 'none';
+  el('app').classList.add('on');
+  el('av').textContent = u.name.split(' ').map(x=>x[0]).join('').slice(0,2);
+  el('un').textContent = u.name.split(' ')[0];
+  el('ur').textContent = u.role;
+  if (u.role !== 'admin') {
+    if(el('adm-sec')) el('adm-sec').style.display='none';
+    if(el('adm-ni'))  el('adm-ni').style.display='none';
+  }
+  el('tdt').textContent = new Date().toLocaleDateString('en-IN',
+    {weekday:'short',day:'numeric',month:'short',year:'numeric'});
+
+  startCCTVAutoScan();
+  rdash();
+  toast('Welcome, ' + u.name.split(' ')[0] + '! 👋', 'ok');
+  if (sbOk) sbSetupRealtime();
+  if (btn) { btn.disabled = false; btn.textContent = 'Sign In →'; }
 };
 
 // ── BOOT: Replace doLogout ────────────────────────────────────
