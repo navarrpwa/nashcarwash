@@ -886,8 +886,8 @@ SELECT
    FROM service_log_services sls WHERE sls.log_id = sl.id) AS services,
   (SELECT jsonb_agg(jsonb_build_object('method', slp.method, 'amount', slp.amount))
    FROM service_log_payments slp WHERE slp.log_id = sl.id) AS payment_details,
-  (SELECT jsonb_agg(jsonb_build_object('by', sle.edited_by, 'action', sle.action, 'at', sle.edited_at))
-   ORDER BY sle.edited_at
+  (SELECT jsonb_agg(jsonb_build_object('by', sle.edited_by, 'action', sle.action, 'at', sle.edited_at)
+           ORDER BY sle.edited_at)
    FROM service_log_edits sle WHERE sle.log_id = sl.id) AS edit_history
 FROM service_logs sl
 LEFT JOIN customers c ON c.id = sl.customer_id
