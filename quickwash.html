@@ -734,7 +734,645 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
 </div>
 <div id="toasts"></div><div id="mods"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
+// ── Supabase Integration Layer ──
+// ============================================================
+// QuickWash Enterprise — Supabase Integration Layer
+// Paste this block into quickwash.html BEFORE the main script
+// ============================================================
+
+// ── CONFIGURATION ────────────────────────────────────────────
+const SUPABASE_URL    = 'https://jvpbgnjyasqjuivuhepp.supabase.co';
+const SUPABASE_ANON   = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2cGJnbmp5YXNxanVpdnVoZXBwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYwNDE3NjksImV4cCI6MjEwMTYxNzc2OX0.Cfaq-qoJE6TG2o1U2TPum--Ek1mV6ocr58WSMTTahF0';
+
+// ── SUPABASE CLIENT ──────────────────────────────────────────
+const _sb = window.supabase?.createClient(SUPABASE_URL, SUPABASE_ANON, {
+  auth: { persistSession: false, autoRefreshToken: false }
+});
+
+// Helpers
+const sbQ  = (table) => _sb.from(table);
+const sbRPC = (fn, args) => _sb.rpc(fn, args || {});
+
+// ── SESSION MANAGEMENT ────────────────────────────────────────
+const SB_SESSION_KEY = 'qw_session';
+
+async function sbLogin(email, password) {
+  const { data, error } = await sbRPC('login', { p_email: email, p_password: password });
+  if (error) throw error;
+  if (!data.success) throw new Error(data.message);
+  localStorage.setItem(SB_SESSION_KEY, data.token);
+  return data;
+}
+
+function sbGetToken() {
+  return localStorage.getItem(SB_SESSION_KEY) || '';
+}
+
+async function sbLogout() {
+  const token = sbGetToken();
+  if (token) {
+    await sbQ('user_sessions').delete().eq('token', token);
+    localStorage.removeItem(SB_SESSION_KEY);
+  }
+}
+
+async function sbVerifySession() {
+  const token = sbGetToken();
+  if (!token) return null;
+  const { data, error } = await sbRPC('verify_session', { p_token: token });
+  if (error || !data?.length) { localStorage.removeItem(SB_SESSION_KEY); return null; }
+  return data[0];
+}
+
+// ── USER PERMISSIONS ─────────────────────────────────────────
+async function sbGetPermissions(userId) {
+  const { data } = await sbQ('user_permissions').select('*').eq('user_id', userId);
+  const perms = {};
+  (data || []).forEach(p => { perms[p.module] = p; });
+  return perms;
+}
+
+// ── APP CONFIG ───────────────────────────────────────────────
+async function sbLoadConfig() {
+  const { data } = await sbQ('app_config').select('*');
+  const cfg = {};
+  (data || []).forEach(r => { cfg[r.key] = r.value; });
+  return cfg;
+}
+
+async function sbSaveConfig(key, value) {
+  await sbQ('app_config').upsert({ key, value, updated_at: new Date().toISOString() });
+}
+
+// ── VEHICLE TYPES & CATEGORIES ───────────────────────────────
+async function sbLoadVehicleTypes() {
+  const { data } = await sbQ('vehicle_types').select('*, vehicle_categories(*)').eq('active', true).order('sort_order');
+  return data || [];
+}
+
+// ── WASH SERVICES ─────────────────────────────────────────────
+async function sbLoadServices() {
+  const { data } = await sbQ('wash_services')
+    .select('*, wash_service_prices(*, vehicle_categories(name))')
+    .eq('active', true).order('sort_order');
+  return data || [];
+}
+
+async function sbSaveServicePrice(serviceId, catId, price) {
+  await sbQ('wash_service_prices').upsert({
+    service_id: serviceId, vehicle_category_id: catId, price,
+    updated_at: new Date().toISOString()
+  }, { onConflict: 'service_id,vehicle_category_id' });
+}
+
+async function sbSaveService(svc) {
+  if (svc.id) {
+    await sbQ('wash_services').update({ name: svc.name, category: svc.category,
+      base_price: svc.base_price, duration_min: svc.duration_min }).eq('id', svc.id);
+  } else {
+    const { data } = await sbQ('wash_services').insert({
+      name: svc.name, category: svc.category,
+      base_price: svc.base_price, duration_min: svc.duration_min
+    }).select().single();
+    return data;
+  }
+}
+
+async function sbDeleteService(id) {
+  await sbQ('wash_services').update({ active: false }).eq('id', id);
+}
+
+// ── CUSTOMERS ─────────────────────────────────────────────────
+async function sbLoadCustomers(search = '', limit = 50, offset = 0) {
+  let q = sbQ('v_customers_full').select('*').eq('active', true).order('name');
+  if (search) q = q.or(`name.ilike.%${search}%,phone.ilike.%${search}%`);
+  const { data, count } = await q.range(offset, offset + limit - 1);
+  return { data: data || [], count };
+}
+
+async function sbFindCustomerByPlate(plate) {
+  const { data } = await sbQ('customer_plates')
+    .select('customer_id, customers(*)')
+    .ilike('plate', plate.trim().toUpperCase())
+    .limit(1);
+  return data?.[0]?.customers || null;
+}
+
+async function sbSaveCustomer(cust) {
+  if (cust.id) {
+    const { data } = await sbQ('customers').update({
+      name: cust.name, phone: cust.phone, email: cust.email, notes: cust.notes,
+      updated_at: new Date().toISOString()
+    }).eq('id', cust.id).select().single();
+    return data;
+  } else {
+    const { data } = await sbQ('customers').insert({
+      name: cust.name, phone: cust.phone, email: cust.email || '', notes: cust.notes || ''
+    }).select().single();
+    if (data && cust.plate) {
+      await sbQ('customer_plates').insert({ customer_id: data.id, plate: cust.plate.toUpperCase() });
+    }
+    return data;
+  }
+}
+
+async function sbAddPlate(customerId, plate) {
+  await sbQ('customer_plates').upsert(
+    { customer_id: customerId, plate: plate.toUpperCase() },
+    { onConflict: 'customer_id,plate' }
+  );
+}
+
+// ── SERVICE LOGS ──────────────────────────────────────────────
+async function sbLoadServiceLogs({ status, search, limit = 50, offset = 0, dateFrom, dateTo } = {}) {
+  let q = sbQ('v_service_logs_full').select('*').order('entered_at', { ascending: false });
+  if (status && status !== 'all') q = q.eq('status', status);
+  if (search)    q = q.or(`plate.ilike.%${search}%,customer_name.ilike.%${search}%,invoice_no.ilike.%${search}%`);
+  if (dateFrom)  q = q.gte('entered_at', dateFrom);
+  if (dateTo)    q = q.lte('entered_at', dateTo);
+  const { data, count } = await q.range(offset, offset + limit - 1);
+  return { data: data || [], count };
+}
+
+async function sbLoadActiveJobs() {
+  const { data } = await sbQ('v_service_logs_full')
+    .select('*')
+    .not('status', 'in', '("delivered","cancelled")')
+    .order('entered_at');
+  return data || [];
+}
+
+async function sbCreateServiceEntry(payload) {
+  const { data, error } = await sbRPC('create_service_entry', {
+    p_data: payload, p_session_token: sbGetToken()
+  });
+  if (error) throw error;
+  if (!data.success) throw new Error(data.message);
+  return data;
+}
+
+async function sbAdvanceLogStatus(logId, newStatus) {
+  const { data, error } = await sbRPC('advance_log_status', {
+    p_log_id: logId, p_status: newStatus, p_session_token: sbGetToken()
+  });
+  if (error) throw error;
+  if (!data.success) throw new Error(data.message);
+}
+
+async function sbEditServiceLog(logId, changes, editedBy) {
+  const token = sbGetToken();
+  // Save edit history
+  await sbQ('service_log_edits').insert({
+    log_id: logId, edited_by: editedBy, action: 'edited',
+    new_value: changes
+  });
+  await sbQ('service_logs').update({ ...changes, updated_at: new Date().toISOString() }).eq('id', logId);
+
+  // Update services if provided
+  if (changes.services) {
+    await sbQ('service_log_services').delete().eq('log_id', logId);
+    await sbQ('service_log_services').insert(
+      changes.services.map(s => ({ log_id: logId, ...s }))
+    );
+  }
+}
+
+async function sbRecordPayment(payload) {
+  const { data, error } = await sbRPC('record_payment', {
+    p_data: payload, p_session_token: sbGetToken()
+  });
+  if (error) throw error;
+  if (!data.success) throw new Error(data.message);
+}
+
+// ── INVENTORY ─────────────────────────────────────────────────
+async function sbLoadInventory(search = '') {
+  let q = sbQ('v_inventory_full').select('*').eq('active', true).order('name');
+  if (search) q = q.ilike('name', `%${search}%`);
+  const { data } = await q;
+  return data || [];
+}
+
+async function sbSaveProduct(prod) {
+  if (prod.id) {
+    await sbQ('inventory_products').update({ ...prod, updated_at: new Date().toISOString() }).eq('id', prod.id);
+  } else {
+    const { data } = await sbQ('inventory_products').insert(prod).select().single();
+    return data;
+  }
+}
+
+async function sbUpdateStock(productId, delta) {
+  const { data } = await sbQ('inventory_products').select('stock').eq('id', productId).single();
+  await sbQ('inventory_products').update({
+    stock: Math.max(0, (data?.stock || 0) + delta),
+    updated_at: new Date().toISOString()
+  }).eq('id', productId);
+}
+
+// ── SUPPLIERS ─────────────────────────────────────────────────
+async function sbLoadSuppliers() {
+  const { data } = await sbQ('suppliers').select('*').eq('active', true).order('name');
+  return data || [];
+}
+
+async function sbSaveSupplier(sup) {
+  if (sup.id) {
+    await sbQ('suppliers').update(sup).eq('id', sup.id);
+  } else {
+    const { data } = await sbQ('suppliers').insert(sup).select().single();
+    return data;
+  }
+}
+
+// ── PURCHASE ORDERS ───────────────────────────────────────────
+async function sbLoadPurchaseOrders() {
+  const { data } = await sbQ('purchase_orders')
+    .select('*, suppliers(name), purchase_items(*, inventory_products(name,unit))')
+    .order('created_at', { ascending: false });
+  return data || [];
+}
+
+async function sbCreatePurchaseOrder(po, items) {
+  const poNum = await sbRPC('next_po_number').then(r => r.data);
+  const { data: poData } = await sbQ('purchase_orders').insert({
+    po_number: poNum, supplier_id: po.supplier_id, total: po.total,
+    notes: po.notes, created_by: po.created_by
+  }).select().single();
+
+  if (poData) {
+    await sbQ('purchase_items').insert(
+      items.map(i => ({ order_id: poData.id, product_id: i.product_id,
+                        qty: i.qty, unit_cost: i.unit_cost }))
+    );
+  }
+  return poData;
+}
+
+async function sbReceivePurchaseOrder(poId) {
+  const { data, error } = await sbRPC('receive_purchase_order', {
+    p_po_id: poId, p_session_token: sbGetToken()
+  });
+  if (error) throw error;
+  if (!data.success) throw new Error(data.message);
+}
+
+// ── STAFF & ATTENDANCE ────────────────────────────────────────
+async function sbLoadStaff() {
+  const { data } = await sbQ('staff').select('*').eq('active', true).order('name');
+  return data || [];
+}
+
+async function sbSaveStaff(staff) {
+  if (staff.id) {
+    await sbQ('staff').update(staff).eq('id', staff.id);
+  } else {
+    const { data } = await sbQ('staff').insert(staff).select().single();
+    return data;
+  }
+}
+
+async function sbLoadAttendance(month) {
+  const start = new Date(month);
+  const end   = new Date(start.getFullYear(), start.getMonth() + 1, 0);
+  const { data } = await sbQ('attendance')
+    .select('*, staff(name, basic, hra, allowances)')
+    .gte('date', start.toISOString().slice(0,10))
+    .lte('date', end.toISOString().slice(0,10))
+    .order('date');
+  return data || [];
+}
+
+async function sbMarkAttendance(staffId, date, status, inTime, outTime) {
+  await sbQ('attendance').upsert({
+    staff_id: staffId, date, status, in_time: inTime || null, out_time: outTime || null,
+    updated_at: new Date().toISOString()
+  }, { onConflict: 'staff_id,date' });
+}
+
+// ── EXPENSES ──────────────────────────────────────────────────
+async function sbLoadExpenses(dateFrom, dateTo) {
+  let q = sbQ('expenses').select('*').order('date', { ascending: false });
+  if (dateFrom) q = q.gte('date', dateFrom);
+  if (dateTo)   q = q.lte('date', dateTo);
+  const { data } = await q;
+  return data || [];
+}
+
+async function sbSaveExpense(exp) {
+  if (exp.id) {
+    await sbQ('expenses').update(exp).eq('id', exp.id);
+  } else {
+    const { data } = await sbQ('expenses').insert(exp).select().single();
+    return data;
+  }
+}
+
+async function sbDeleteExpense(id) {
+  await sbQ('expenses').delete().eq('id', id);
+}
+
+// ── TRANSACTIONS ──────────────────────────────────────────────
+async function sbLoadTransactions(dateFrom, dateTo, limit = 200) {
+  let q = sbQ('transactions').select('*').order('created_at', { ascending: false }).limit(limit);
+  if (dateFrom) q = q.gte('created_at', dateFrom);
+  if (dateTo)   q = q.lte('created_at', dateTo);
+  const { data } = await q;
+  return data || [];
+}
+
+// ── PACKAGES ──────────────────────────────────────────────────
+async function sbLoadPackages() {
+  const { data } = await sbQ('packages').select('*').eq('active', true).order('name');
+  return data || [];
+}
+
+async function sbSavePackage(pkg) {
+  if (pkg.id) {
+    await sbQ('packages').update(pkg).eq('id', pkg.id);
+  } else {
+    const { data } = await sbQ('packages').insert(pkg).select().single();
+    return data;
+  }
+}
+
+// ── OFFERS ───────────────────────────────────────────────────
+async function sbLoadOffers() {
+  const { data } = await sbQ('offers').select('*').order('name');
+  return data || [];
+}
+
+async function sbSaveOffer(offer) {
+  if (offer.id) {
+    await sbQ('offers').update(offer).eq('id', offer.id);
+  } else {
+    const { data } = await sbQ('offers').insert(offer).select().single();
+    return data;
+  }
+}
+
+// ── LOYALTY ───────────────────────────────────────────────────
+async function sbLoadLoyaltyHistory(customerId) {
+  const { data } = await sbQ('loyalty_history')
+    .select('*').eq('customer_id', customerId)
+    .order('created_at', { ascending: false });
+  return data || [];
+}
+
+async function sbLoadVisitRewardRules() {
+  const { data } = await sbQ('visit_reward_rules').select('*').eq('active', true).order('visits');
+  return data || [];
+}
+
+// ── CCTV ─────────────────────────────────────────────────────
+async function sbLoadCameras() {
+  const { data } = await sbQ('cctv_cameras').select('*').order('name');
+  return data || [];
+}
+
+async function sbSaveCamera(cam) {
+  if (cam.id) {
+    await sbQ('cctv_cameras').update(cam).eq('id', cam.id);
+  } else {
+    const { data } = await sbQ('cctv_cameras').insert(cam).select().single();
+    return data;
+  }
+}
+
+async function sbToggleCamera(id, enabled) {
+  await sbQ('cctv_cameras').update({ enabled, status: enabled ? 'online' : 'offline' }).eq('id', id);
+}
+
+async function sbLoadDetections({ limit = 100, search = '', status = '' } = {}) {
+  let q = sbQ('cctv_detections').select('*').order('detected_at', { ascending: false }).limit(limit);
+  if (search) q = q.ilike('plate', `%${search}%`);
+  if (status) q = q.eq('status', status);
+  const { data } = await q;
+  return data || [];
+}
+
+async function sbSaveDetection(det) {
+  const { data } = await sbQ('cctv_detections').insert({
+    plate: det.plate, camera_id: det.camera_id || null,
+    camera_name: det.camera_name, location: det.location,
+    confidence: det.confidence, status: 'detected', detected_at: new Date().toISOString()
+  }).select().single();
+  return data;
+}
+
+async function sbIgnoreDetection(id) {
+  await sbQ('cctv_detections').update({ status: 'ignored' }).eq('id', id);
+}
+
+async function sbRestoreDetection(id) {
+  await sbQ('cctv_detections').update({ status: 'detected' }).eq('id', id);
+}
+
+async function sbUpdateCameraPing(id) {
+  await sbQ('cctv_cameras').update({
+    last_ping: new Date().toISOString(), status: 'online'
+  }).eq('id', id);
+}
+
+// ── SMS ───────────────────────────────────────────────────────
+async function sbSaveSmsLog(logId, phone, message, status) {
+  const { data } = await sbQ('sms_logs').insert({
+    log_id: logId, phone, message, status, attempts: 1,
+    sent_at: status === 'sent' ? new Date().toISOString() : null
+  }).select().single();
+  return data;
+}
+
+async function sbLoadSmsLogs(limit = 100) {
+  const { data } = await sbQ('sms_logs').select('*, service_logs(invoice_no, plate)')
+    .order('created_at', { ascending: false }).limit(limit);
+  return data || [];
+}
+
+// ── REPORTS / DASHBOARD ───────────────────────────────────────
+async function sbGetDashboardStats() {
+  const { data, error } = await sbRPC('get_dashboard_stats');
+  if (error) throw error;
+  return data;
+}
+
+async function sbGetRevenueReport(dateFrom, dateTo) {
+  const { data } = await sbQ('service_logs')
+    .select('entered_at, total, pay_method, status')
+    .gte('entered_at', dateFrom).lte('entered_at', dateTo)
+    .eq('paid', true);
+  return data || [];
+}
+
+async function sbGetStaffReport(month) {
+  const start = month + '-01';
+  const end   = new Date(new Date(start).getFullYear(),
+                  new Date(start).getMonth() + 1, 0).toISOString().slice(0,10);
+  const { data } = await sbQ('attendance')
+    .select('*, staff(name, basic, hra, allowances)')
+    .gte('date', start).lte('date', end);
+  return data || [];
+}
+
+// ── AUDIT ─────────────────────────────────────────────────────
+async function sbAudit(action, module, recordId, prevValue, newValue) {
+  const user = SB_CURRENT_USER;
+  if (!user) return;
+  await sbQ('audit_logs').insert({
+    user_id: user.id, user_name: user.name,
+    action, module, record_id: recordId ? String(recordId) : null,
+    prev_value: prevValue || null, new_value: newValue || null
+  });
+}
+
+// ── REALTIME ──────────────────────────────────────────────────
+const _rtChannels = {};
+
+function sbSubscribe(table, callback, filter) {
+  // Remove existing subscription
+  if (_rtChannels[table]) {
+    _sb.removeChannel(_rtChannels[table]);
+  }
+  const ch = _sb.channel(`rt_${table}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table, filter }, callback)
+    .subscribe();
+  _rtChannels[table] = ch;
+  return ch;
+}
+
+function sbUnsubscribe(table) {
+  if (_rtChannels[table]) {
+    _sb.removeChannel(_rtChannels[table]);
+    delete _rtChannels[table];
+  }
+}
+
+function sbUnsubscribeAll() {
+  Object.keys(_rtChannels).forEach(t => sbUnsubscribe(t));
+}
+
+// ── CURRENT USER (in-memory) ──────────────────────────────────
+let SB_CURRENT_USER = null;
+
+function sbSetCurrentUser(user) {
+  SB_CURRENT_USER = user;
+}
+
+// ── LOADING STATE ─────────────────────────────────────────────
+let _loadingCount = 0;
+
+function sbShowLoading(msg = 'Loading…') {
+  _loadingCount++;
+  let el = document.getElementById('sb-loading');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'sb-loading';
+    el.style.cssText = [
+      'position:fixed', 'bottom:20px', 'left:50%', 'transform:translateX(-50%)',
+      'background:#0d2680', 'color:#fff', 'padding:8px 20px', 'border-radius:20px',
+      'font-size:12px', 'font-weight:700', 'z-index:9999', 'box-shadow:0 4px 12px rgba(0,0,0,.3)',
+      'display:flex', 'align-items:center', 'gap:8px'
+    ].join(';');
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `<div style="width:14px;height:14px;border:2px solid rgba(255,255,255,.3);
+    border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite"></div>${msg}`;
+  el.style.display = 'flex';
+}
+
+function sbHideLoading() {
+  _loadingCount = Math.max(0, _loadingCount - 1);
+  if (_loadingCount === 0) {
+    const el = document.getElementById('sb-loading');
+    if (el) el.style.display = 'none';
+  }
+}
+
+// ── ONLINE/OFFLINE DETECTION ──────────────────────────────────
+window.addEventListener('online',  () => toast('🟢 Back online — syncing…', 'ok'));
+window.addEventListener('offline', () => toast('🔴 Offline — changes will sync when reconnected', 'e'));
+
+// ── SPIN ANIMATION (add to CSS) ───────────────────────────────
+const _spinStyle = document.createElement('style');
+_spinStyle.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
+document.head.appendChild(_spinStyle);
+
+// ── ERROR HANDLER ─────────────────────────────────────────────
+function sbHandleError(err, userMessage = 'Something went wrong') {
+  console.error('[Supabase Error]', err);
+  toast(userMessage + (err?.message ? ': ' + err.message : ''), 'e');
+}
+
+// ── DEBOUNCE HELPER ───────────────────────────────────────────
+function sbDebounce(fn, delay = 350) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
+}
+
+// ── EXPORT ───────────────────────────────────────────────────
+window.QB = {
+  // Auth
+  login: sbLogin, logout: sbLogout, verifySession: sbVerifySession,
+  getPermissions: sbGetPermissions, getToken: sbGetToken,
+  setCurrentUser: sbSetCurrentUser,
+  // Config
+  loadConfig: sbLoadConfig, saveConfig: sbSaveConfig,
+  // Vehicles
+  loadVehicleTypes: sbLoadVehicleTypes,
+  // Services
+  loadServices: sbLoadServices, saveService: sbSaveService,
+  saveServicePrice: sbSaveServicePrice, deleteService: sbDeleteService,
+  // Customers
+  loadCustomers: sbLoadCustomers, findCustomerByPlate: sbFindCustomerByPlate,
+  saveCustomer: sbSaveCustomer, addPlate: sbAddPlate,
+  // Service Logs
+  loadServiceLogs: sbLoadServiceLogs, loadActiveJobs: sbLoadActiveJobs,
+  createServiceEntry: sbCreateServiceEntry, advanceLogStatus: sbAdvanceLogStatus,
+  editServiceLog: sbEditServiceLog, recordPayment: sbRecordPayment,
+  // Inventory
+  loadInventory: sbLoadInventory, saveProduct: sbSaveProduct, updateStock: sbUpdateStock,
+  // Suppliers
+  loadSuppliers: sbLoadSuppliers, saveSupplier: sbSaveSupplier,
+  // Purchases
+  loadPurchaseOrders: sbLoadPurchaseOrders, createPurchaseOrder: sbCreatePurchaseOrder,
+  receivePurchaseOrder: sbReceivePurchaseOrder,
+  // Staff
+  loadStaff: sbLoadStaff, saveStaff: sbSaveStaff,
+  loadAttendance: sbLoadAttendance, markAttendance: sbMarkAttendance,
+  // Expenses
+  loadExpenses: sbLoadExpenses, saveExpense: sbSaveExpense, deleteExpense: sbDeleteExpense,
+  // Packages
+  loadPackages: sbLoadPackages, savePackage: sbSavePackage,
+  // Offers
+  loadOffers: sbLoadOffers, saveOffer: sbSaveOffer,
+  // Loyalty
+  loadLoyaltyHistory: sbLoadLoyaltyHistory, loadVisitRewardRules: sbLoadVisitRewardRules,
+  // CCTV
+  loadCameras: sbLoadCameras, saveCamera: sbSaveCamera, toggleCamera: sbToggleCamera,
+  loadDetections: sbLoadDetections, saveDetection: sbSaveDetection,
+  ignoreDetection: sbIgnoreDetection, restoreDetection: sbRestoreDetection,
+  updateCameraPing: sbUpdateCameraPing,
+  // SMS
+  saveSmsLog: sbSaveSmsLog, loadSmsLogs: sbLoadSmsLogs,
+  // Reports
+  getDashboardStats: sbGetDashboardStats, getRevenueReport: sbGetRevenueReport,
+  getStaffReport: sbGetStaffReport,
+  // Realtime
+  subscribe: sbSubscribe, unsubscribe: sbUnsubscribe, unsubscribeAll: sbUnsubscribeAll,
+  // Audit
+  audit: sbAudit,
+  // Utils
+  loading: sbShowLoading, doneLoading: sbHideLoading,
+  error: sbHandleError, debounce: sbDebounce,
+};
+
+console.log('[QuickWash] Supabase integration layer ready. QB available globally.');
+
+
+// ── Main App Script ──
+
 // ══════════════════════════════════════════════════════════
 // MASTER DATA & CONFIGURATION
 // ══════════════════════════════════════════════════════════
@@ -3513,6 +4151,840 @@ if(typeof Chart!=='undefined'){Chart.defaults.color='#64748B';Chart.defaults.bor
 
 // Init
 document.addEventListener('DOMContentLoaded',()=>{if(el('sl-dt'))el('sl-dt').value=new Date().toISOString().slice(0,10);});
+
+
+// ── Supabase Migration Patch ──
+// ============================================================
+// QuickWash Enterprise — Supabase Migration Patch
+// Paste this AFTER the main quickwash script block
+// Overrides all demo functions with live Supabase equivalents
+// ============================================================
+
+// ── BOOT: Replace doLogin with Supabase auth ──────────────────
+const _origDoLogin = window.doLogin;
+window.doLogin = async function() {
+  const email = el('ie')?.value?.trim();
+  const pass  = el('ip')?.value;
+  if (!email || !pass) { toast('Enter email and password', 'e'); return; }
+
+  const btn = document.querySelector('.lbtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+
+  try {
+    QB.loading('Authenticating…');
+    const result = await QB.login(email, pass);
+    QB.doneLoading();
+
+    QB.setCurrentUser(result.user);
+    S.user = { id: result.user.id, name: result.user.name,
+               email: result.user.email, role: result.user.role };
+
+    // Load everything from Supabase
+    await sbBootstrapApp();
+
+    el('app').classList.add('on');
+    el('lw').style.display = 'none';
+    startCCTVAutoScan();
+    rdash();
+    toast('Welcome, ' + result.user.name.split(' ')[0] + '! 👋', 'ok');
+
+    // Subscribe to realtime
+    sbSetupRealtime();
+
+  } catch(err) {
+    QB.doneLoading();
+    QB.error(err, err.message || 'Login failed');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign In →'; }
+  }
+};
+
+// ── BOOT: Replace doLogout ────────────────────────────────────
+const _origDoLogout = window.doLogout;
+window.doLogout = async function() {
+  stopCCTVAutoScan();
+  QB.unsubscribeAll();
+  await QB.logout();
+  S.user = null;
+  el('app').classList.remove('on');
+  el('lw').style.display = 'flex';
+};
+
+// ── BOOTSTRAP: Load all app data from Supabase ───────────────
+async function sbBootstrapApp() {
+  QB.loading('Loading data…');
+  try {
+    // Parallel loads
+    const [cfg, vtypes, services, customers, staff, products, suppliers,
+           packages, offers, cameras, detections] = await Promise.all([
+      QB.loadConfig(),
+      QB.loadVehicleTypes(),
+      QB.loadServices(),
+      QB.loadCustomers(),
+      QB.loadStaff(),
+      QB.loadInventory(),
+      QB.loadSuppliers(),
+      QB.loadPackages(),
+      QB.loadOffers(),
+      QB.loadCameras(),
+      QB.loadDetections({ limit: 200 }),
+    ]);
+
+    // Map DB config to CFG object
+    Object.assign(CFG, {
+      bizName:       cfg.biz_name       || CFG.bizName,
+      bizPhone:      cfg.biz_phone      || CFG.bizPhone,
+      bizAddr:       cfg.biz_addr       || CFG.bizAddr,
+      gstRate:       parseFloat(cfg.gst_rate) || CFG.gstRate,
+      currency:      cfg.currency       || CFG.currency,
+      pointsPerRupee:parseFloat(cfg.points_per_rupee) || CFG.pointsPerRupee,
+      pointValue:    parseFloat(cfg.point_value) || CFG.pointValue,
+      pointExpiry:   parseInt(cfg.point_expiry) || CFG.pointExpiry,
+      loyaltyEnabled:cfg.loyalty_enabled !== false,
+      cctvDedupMins: parseInt(cfg.cctv_dedup_mins) || CFG.cctvDedupMins,
+      cctvMinConf:   parseInt(cfg.cctv_min_conf) || CFG.cctvMinConf,
+      cctvRetention: parseInt(cfg.cctv_retention) || CFG.cctvRetention,
+      cctvScanInterval: parseInt(cfg.cctv_scan_interval) || CFG.cctvScanInterval,
+    });
+
+    // Map vehicle types into existing format
+    S._vtypes = vtypes;
+    VEHICLE_TYPES.length = 0;
+    vtypes.forEach(vt => {
+      VEHICLE_TYPES.push({
+        id: vt.code, label: vt.label, icon: vt.icon,
+        _dbId: vt.id,
+        cats: (vt.vehicle_categories || []).map(vc => vc.name)
+      });
+      // Build CAT_MUL
+      (vt.vehicle_categories || []).forEach(vc => {
+        CAT_MUL[vc.name] = parseFloat(vc.multiplier) || 1;
+      });
+    });
+
+    // Map ALL_CATS
+    ALL_CATS.length = 0;
+    vtypes.forEach(vt => {
+      (vt.vehicle_categories || []).forEach(vc => {
+        ALL_CATS.push({ type: vt.code, typeLabel: vt.label, cat: vc.name, _dbId: vc.id });
+      });
+    });
+
+    // Map services
+    S.washSvcs = services.map(svc => ({
+      id: svc.id, name: svc.name, cat: svc.category,
+      basePrice: parseFloat(svc.base_price), dur: svc.duration_min,
+      prices: Object.fromEntries(
+        (svc.wash_service_prices || []).map(p => [p.vehicle_categories?.name, parseFloat(p.price)])
+      )
+    }));
+
+    // Map customers (flatten view data)
+    S.customers = customers.data.map(c => ({
+      id: c.id, name: c.name, phone: c.phone, email: c.email || '',
+      visits: c.visits, totalSpent: parseFloat(c.total_spent),
+      lastVisit: c.last_visit, points: c.points, notes: c.notes || '',
+      plates: Array.isArray(c.plates) ? c.plates : (c.plates ? Object.values(c.plates) : []),
+      loyaltyHistory: []
+    }));
+
+    // Map staff
+    S.staff = staff.map(s => ({
+      id: s.id, name: s.name, phone: s.phone, role: s.role,
+      basic: parseFloat(s.basic), hra: parseFloat(s.hra),
+      allowances: parseFloat(s.allowances), joinDate: s.join_date, active: s.active
+    }));
+
+    // Map products
+    S.products = products.map(p => ({
+      id: p.id, name: p.name, sku: p.sku, barcode: p.barcode,
+      category: p.category, brand: p.brand,
+      supplierId: p.supplier_id, supplierName: p.supplier_name,
+      costPrice: parseFloat(p.cost_price), sellingPrice: parseFloat(p.selling_price),
+      stock: p.stock, minStock: p.min_stock, maxStock: p.max_stock,
+      unit: p.unit, active: p.active
+    }));
+
+    // Map suppliers
+    S.suppliers = suppliers.map(s => ({
+      id: s.id, name: s.name, contact: s.contact, phone: s.phone,
+      email: s.email, address: s.address,
+      outstanding: parseFloat(s.outstanding || 0)
+    }));
+
+    // Map packages
+    S.packages = packages.map(p => ({
+      id: p.id, name: p.name, desc: p.description,
+      price: parseFloat(p.price), discount: parseFloat(p.discount),
+      validity: p.validity, active: p.active,
+      services: Array.isArray(p.services) ? p.services : JSON.parse(p.services || '[]'),
+      categories: Array.isArray(p.categories) ? p.categories : JSON.parse(p.categories || '[]')
+    }));
+
+    // Map offers
+    S.offers = offers.map(o => ({
+      id: o.id, name: o.name, type: o.type,
+      value: parseFloat(o.value), startDate: o.start_date, endDate: o.end_date,
+      coupon: o.coupon, usageLimit: o.usage_limit, usedCount: o.used_count,
+      services: Array.isArray(o.services) ? o.services : JSON.parse(o.services || '[]'),
+      categories: Array.isArray(o.categories) ? o.categories : JSON.parse(o.categories || '[]'),
+      active: o.active
+    }));
+
+    // Map cameras
+    S.cameras = cameras.map(c => ({
+      id: c.id, name: c.name, location: c.location, ip: c.ip,
+      type: c.type, apiKey: c.api_key, enabled: c.enabled,
+      status: c.status, lastPing: c.last_ping
+    }));
+
+    // Map detections
+    S.detections = detections.map(d => ({
+      id: d.id, plate: d.plate, camId: d.camera_id,
+      camName: d.camera_name, location: d.location,
+      conf: d.confidence, status: d.status, logId: d.log_id,
+      at: d.detected_at, duplicate: false
+    }));
+
+    // Load active service logs
+    await sbRefreshServiceLogs();
+    await sbRefreshCompletedJobs();
+
+    QB.doneLoading();
+    console.log('[QuickWash] App data loaded from Supabase ✓');
+
+  } catch(err) {
+    QB.doneLoading();
+    QB.error(err, 'Failed to load app data');
+    throw err;
+  }
+}
+
+// ── SERVICE LOGS ─────────────────────────────────────────────
+async function sbRefreshServiceLogs() {
+  const { data } = await QB.loadServiceLogs({ limit: 100 });
+  S.sl = data.map(mapDbLog);
+}
+
+async function sbRefreshCompletedJobs() {
+  const { data } = await QB.loadServiceLogs({
+    status: '', limit: 200
+  });
+  S.sl = data.map(mapDbLog);
+}
+
+function mapDbLog(l) {
+  const svcs = Array.isArray(l.services) ? l.services : [];
+  const pmts  = Array.isArray(l.payment_details) ? l.payment_details : [];
+  const edits = Array.isArray(l.edit_history) ? l.edit_history : [];
+  return {
+    id: l.id, jobNumber: l.job_number, invoiceNo: l.invoice_no || l.job_number,
+    plate: l.plate, model: l.model, vtype: l.vehicle_type_id, vcat: l.vehicle_cat_id,
+    vtypeLabel: l.vehicle_type_label, vcatName: l.vehicle_cat_name,
+    custId: l.customer_id,
+    custName: l.customer_name, custPhone: l.customer_phone,
+    svcs: svcs.map(s => s.service_name || s.name),
+    svcDetails: svcs,
+    amount: parseFloat(l.amount), disc: parseFloat(l.discount || 0),
+    tax: parseFloat(l.tax || 0), total: parseFloat(l.total || l.amount),
+    status: l.status, pay: l.pay_method, payDetail: pmts,
+    paid: l.paid, ptsEarned: l.pts_earned, ptsRedeemed: l.pts_redeemed,
+    staff: l.staff_name, notes: l.notes, smsStatus: l.sms_status,
+    estimatedMins: l.estimated_mins,
+    enteredAt: l.entered_at, receivedAt: l.received_at,
+    washingAt: l.washing_at, interiorAt: l.interior_at,
+    detailingAt: l.detailing_at, qcAt: l.qc_at,
+    readyAt: l.ready_at, deliveredAt: l.delivered_at, cancelledAt: l.cancelled_at,
+    editHistory: edits.map(e => ({ by: e.by, action: e.action, at: e.at }))
+  };
+}
+
+// ── OVERRIDE: Vehicle Entry completeEntry ─────────────────────
+const _origCompleteEntry = window.completeEntry;
+window.completeEntry = async function() {
+  const btn = document.querySelector('#step-4-confirm');
+  if (btn) btn.disabled = true;
+
+  QB.loading('Creating service entry…');
+  try {
+    // Find DB IDs for vehicle type & category
+    const vtRow = S._vtypes?.find(vt => vt.code === S.W.vtype);
+    const vcRow = vtRow?.vehicle_categories?.find(vc => vc.name === S.W.vcat);
+
+    const svcDetails = (S.W.svcs || []).map(x => {
+      const svc = S.washSvcs.find(s => s.id === x.id);
+      const price = svc ? (svc.prices?.[S.W.vcat] || svc.basePrice) : 0;
+      return { service_id: svc?.id || null, service_name: svc?.name || x.id, price, qty: 1 };
+    });
+
+    const tot = svcDetails.reduce((a, s) => a + s.price, 0);
+    const disc = parseFloat(el('we-disc')?.value) || 0;
+    const pts  = CFG.loyaltyEnabled ? Math.floor((tot - disc) * (CFG.pointsPerRupee || 0.1)) : 0;
+    const ptsRedeem = parseInt(S.W.redeemPoints) || 0;
+
+    const payload = {
+      plate: S.W.plate?.toUpperCase(),
+      model: ((el('wv-n')?.value || '') + (el('wv-b')?.value ? ' ' + el('wv-b').value : '')).trim(),
+      vehicle_type_id: vtRow?.id || null,
+      vehicle_cat_id: vcRow?.id || null,
+      customer_id: S.W.custId || null,
+      amount: tot,
+      discount: disc,
+      pay_method: S.W.payMethods?.[0] || 'cash',
+      paid: !S.W.payMethods?.includes('credit'),
+      pts_earned: pts,
+      pts_redeemed: ptsRedeem,
+      estimated_mins: svcDetails.reduce((a, s) => a + (S.washSvcs.find(w=>w.name===s.service_name)?.dur||30), 0),
+      staff_name: S.user?.name || '',
+      notes: el('we-notes')?.value || '',
+      services: svcDetails,
+      payment_details: S.W.payMethods?.map(m => ({
+        method: m, amount: S.W.splitAmounts?.[m] || (tot - disc)
+      })) || [{ method: 'cash', amount: tot - disc }]
+    };
+
+    const result = await QB.createServiceEntry(payload);
+
+    // Refresh local state
+    await sbRefreshServiceLogs();
+
+    // Update customer loyalty in local state
+    if (S.W.custId) {
+      const cust = S.customers.find(c => c.id === S.W.custId);
+      if (cust) { cust.points = Math.max(0, cust.points + pts - ptsRedeem); cust.visits++; }
+    }
+
+    QB.doneLoading();
+    toast('✓ Job ' + result.job_number + ' created!', 'ok');
+
+    // Auto-SMS
+    if (CFG.sms?.enabled && CFG.sms?.autoSendOnComplete) {
+      const newLog = S.sl.find(l => l.id === result.log_id);
+      if (newLog) setTimeout(() => sendSMS(result.log_id, true), 1000);
+    }
+
+    // Navigate to service log
+    gp('service-log');
+    initVE();
+
+  } catch(err) {
+    QB.doneLoading();
+    QB.error(err, 'Failed to create service entry');
+    if (btn) btn.disabled = false;
+  }
+};
+
+// ── OVERRIDE: Service Log status advance ──────────────────────
+const _origSlAdv = window.slAdv;
+window.slAdv = async function(id) {
+  const LOG_ORDER = ['waiting','received','washing','interior','detailing','qc','ready','delivered'];
+  const log = S.sl.find(l => l.id === id);
+  if (!log) return;
+  const next = LOG_ORDER[LOG_ORDER.indexOf(log.status) + 1];
+  if (!next) return;
+  if (next === 'delivered' && !log.paid) {
+    toast('💳 Please record payment before delivery', 'e'); return;
+  }
+
+  try {
+    QB.loading('Updating…');
+    await QB.advanceLogStatus(id, next);
+    // Optimistic update
+    log.status = next;
+    log[next + 'At'] = new Date().toISOString();
+    QB.doneLoading();
+    renderSL();
+    rdash();
+  } catch(err) {
+    QB.doneLoading();
+    QB.error(err, 'Status update failed');
+  }
+};
+
+// ── OVERRIDE: Save service log edit ───────────────────────────
+const _origSaveSlEdit = window.saveSlEdit;
+window.saveSlEdit = async function(id) {
+  const log = S.sl.find(l => l.id === id);
+  if (!log) return;
+
+  QB.loading('Saving…');
+  try {
+    const changes = {
+      discount: parseFloat(el('sle-disc')?.value) || 0,
+      notes: el('sle-notes')?.value || '',
+      estimated_mins: parseInt(el('sle-est')?.value) || 0,
+      staff_name: el('sle-staff')?.value || ''
+    };
+    // Collect selected services
+    const svcDetails = [];
+    document.querySelectorAll('.sle-svc:checked').forEach(cb => {
+      const svc = S.washSvcs.find(s => String(s.id) === cb.value);
+      if (svc) {
+        const price = svc.prices?.[log.vcatName] || svc.basePrice;
+        svcDetails.push({ log_id: id, service_id: svc.id, service_name: svc.name, price, qty: 1 });
+      }
+    });
+
+    await QB.editServiceLog(id, changes, S.user?.name);
+    // Update services
+    if (svcDetails.length) {
+      await sbQ('service_log_services').delete().eq('log_id', id);
+      await sbQ('service_log_services').insert(svcDetails);
+      changes.services = svcDetails;
+    }
+
+    // Optimistic update
+    Object.assign(log, changes);
+    if (svcDetails.length) log.svcs = svcDetails.map(s => s.service_name);
+
+    QB.doneLoading();
+    closeModal();
+    renderSL();
+    toast('Changes saved ✓', 'ok');
+  } catch(err) {
+    QB.doneLoading();
+    QB.error(err, 'Save failed');
+  }
+};
+
+// ── OVERRIDE: Record payment ──────────────────────────────────
+const _origSaveSlPayment = window.saveSlPayment;
+window.saveSlPayment = async function(id, total) {
+  const log = S.sl.find(l => l.id === id);
+  if (!log) return;
+
+  QB.loading('Recording payment…');
+  try {
+    const methods = [];
+    document.querySelectorAll('.pm-check:checked').forEach(cb => {
+      const amt = parseFloat(el('pm-amt-' + cb.value)?.value) || 0;
+      if (amt > 0) methods.push({ method: cb.value, amount: amt });
+    });
+    const totalPaid = methods.reduce((a, m) => a + m.amount, 0);
+    if (Math.abs(totalPaid - total) > 0.01) {
+      toast('Payment total must equal ₹' + total, 'e'); QB.doneLoading(); return;
+    }
+    const pts = CFG.loyaltyEnabled ? Math.floor(total * (CFG.pointsPerRupee || 0.1)) : 0;
+    await QB.recordPayment({
+      log_id: id,
+      pay_method: methods.map(m => m.method).join('+'),
+      payment_details: methods,
+      pts_earned: pts
+    });
+    // Optimistic update
+    log.paid = true;
+    log.payDetail = methods;
+    log.ptsEarned = pts;
+
+    QB.doneLoading();
+    closeModal();
+    renderSL();
+    toast('Payment recorded ✓', 'ok');
+
+    if (CFG.sms?.autoSendOnPayment) setTimeout(() => sendSMS(id, true), 1000);
+  } catch(err) {
+    QB.doneLoading();
+    QB.error(err, 'Payment recording failed');
+  }
+};
+
+// ── OVERRIDE: Dashboard ───────────────────────────────────────
+const _origRdash = window.rdash;
+window.rdash = async function() {
+  try {
+    // Still render with local data immediately (fast)
+    _origRdash?.();
+    // Then fetch live stats and update KPIs
+    const stats = await QB.getDashboardStats();
+    if (!stats) return;
+    // Update KPI cards if on dashboard
+    if (document.getElementById('pg-dashboard')?.classList.contains('on')) {
+      const kpis = document.querySelectorAll('#pg-dashboard .sv');
+      if (kpis.length >= 8) {
+        kpis[0].textContent = CFG.currency + (parseFloat(stats.today_revenue)||0).toFixed(0);
+        kpis[1].textContent = CFG.currency + (parseFloat(stats.week_revenue)||0).toFixed(0);
+        kpis[2].textContent = stats.active_jobs || 0;
+        kpis[3].textContent = stats.waiting || 0;
+        kpis[4].textContent = stats.delivered_today || 0;
+        kpis[5].textContent = stats.detected_today || 0;
+        kpis[6].textContent = stats.low_stock || 0;
+        kpis[7].textContent = S.sl.filter(l => l.status === 'delivered').length;
+      }
+    }
+  } catch(err) {
+    console.warn('[QuickWash] Dashboard stats error:', err.message);
+  }
+};
+
+// ── OVERRIDE: Customer lookup ─────────────────────────────────
+const _origLookupPlate = window.lookupPlate;
+window.lookupPlate = async function() {
+  const plate = el('wv-plate')?.value?.trim().toUpperCase();
+  if (!plate) return;
+  try {
+    const cust = await QB.findCustomerByPlate(plate);
+    if (cust) {
+      S.W.custId = cust.id;
+      S.W.cust = S.customers.find(c => c.id === cust.id) || cust;
+      toast('✓ Customer: ' + cust.name, 'ok');
+      renderStep1();
+    }
+  } catch(err) { /* silent — not found is ok */ }
+};
+
+// ── OVERRIDE: Quick-add customer ──────────────────────────────
+const _origQkCust = window.qkCust;
+window.qkCust = async function() {
+  const n = el('qc-n')?.value?.trim();
+  const p = el('qc-p')?.value?.trim();
+  if (!n || !p) { toast('Name and phone required', 'e'); return; }
+
+  QB.loading('Adding customer…');
+  try {
+    const saved = await QB.saveCustomer({ name: n, phone: p, plate: S.W.plate });
+    const mapped = { id: saved.id, name: saved.name, phone: saved.phone,
+                     email: '', visits: 0, totalSpent: 0, points: 0,
+                     plates: [S.W.plate], loyaltyHistory: [], notes: '' };
+    S.customers.push(mapped);
+    S.W.custId = saved.id;
+    S.W.cust = mapped;
+    QB.doneLoading();
+    toast('Customer added ✓', 'ok');
+    renderStep1();
+  } catch(err) {
+    QB.doneLoading();
+    QB.error(err, 'Failed to add customer');
+  }
+};
+
+// ── OVERRIDE: CCTV detection save ────────────────────────────
+const _origRunScan = window.runScan;
+window.runScan = async function(cam, silent = false) {
+  if (!cam || !cam.enabled) return;
+
+  // Keep local simulation for demo mode
+  const knownPlates = S.customers.flatMap(c => c.plates || []);
+  const randomPlates = ['MH01XY9876','GJ05AB3210','UP32CD5566','RJ14EF7788'];
+  const pool  = [...knownPlates, ...randomPlates];
+  const plate = pool[Math.floor(Math.random() * pool.length)];
+  const conf  = Math.round(72 + Math.random() * 27);
+
+  if (conf < (CFG.cctvMinConf || 75)) { updateCamPulse(cam.id, 'amber'); return; }
+
+  const dedupMs = (CFG.cctvDedupMins || 5) * 60 * 1000;
+  const dup = S.detections.find(d =>
+    d.plate === plate && d.camId === cam.id && (Date.now() - new Date(d.at)) < dedupMs);
+  if (dup) { updateCamPulse(cam.id, 'blue'); return; }
+
+  const activeJob = S.sl.find(l => l.plate === plate && !['delivered','cancelled'].includes(l.status));
+  try {
+    // Save to Supabase
+    const saved = await QB.saveDetection({
+      plate, camera_id: cam.id, camera_name: cam.name,
+      location: cam.location, confidence: conf
+    });
+    // Update camera ping
+    await QB.updateCameraPing(cam.id);
+
+    const det = {
+      id: saved.id, plate, camId: cam.id, camName: cam.name,
+      location: cam.location, conf, status: 'detected',
+      logId: activeJob?.id || null, at: saved.detected_at, duplicate: false
+    };
+    S.detections.unshift(det);
+    updateCamPulse(cam.id, 'green');
+    _cctvOnDetection();
+    if (el('live-det-feed')) updateLiveFeed(det);
+
+    if (activeJob) {
+      toast('📷 ' + plate + ' — ⚠ Active job in progress', 'w');
+    } else {
+      toast('📷 ANPR: ' + plate + ' detected (' + conf + '%)', 'ok');
+      if (!silent) showDetAlert(det);
+    }
+  } catch(err) {
+    // Fallback to local if DB save fails
+    console.warn('[CCTV] DB save failed, using local:', err.message);
+    _origRunScan?.(cam, silent);
+  }
+};
+
+// ── OVERRIDE: Ignore/Restore detection ───────────────────────
+const _origIgnoreDet = window.ignoreDet;
+window.ignoreDet = async function(id) {
+  const det = S.detections.find(d => d.id === id);
+  if (!det) return;
+  try {
+    if (typeof id === 'string' && id.length > 10) {
+      // UUID — real DB record
+      await QB.ignoreDetection(id);
+    }
+    det.status = 'ignored';
+  } catch(err) { QB.error(err, 'Failed to update detection'); }
+};
+
+// ── OVERRIDE: Inventory save ──────────────────────────────────
+const _origSaveProd = window.saveProd;
+window.saveProd = async function() {
+  QB.loading('Saving product…');
+  try {
+    const prod = {
+      id: el('pm-id')?.value || null,
+      name: el('pm-name')?.value?.trim(),
+      sku: el('pm-sku')?.value?.trim() || null,
+      category: el('pm-cat')?.value || 'accessories',
+      selling_price: parseFloat(el('pm-price')?.value) || 0,
+      cost_price: parseFloat(el('pm-cost')?.value) || 0,
+      stock: parseInt(el('pm-stock')?.value) || 0,
+      min_stock: parseInt(el('pm-min')?.value) || 5,
+      unit: el('pm-unit')?.value || 'pcs',
+    };
+    if (!prod.name) { toast('Product name required', 'e'); QB.doneLoading(); return; }
+    const saved = await QB.saveProduct(prod);
+    if (saved) prod.id = saved.id;
+
+    // Refresh
+    const products = await QB.loadInventory();
+    S.products = products.map(p => ({
+      id: p.id, name: p.name, sku: p.sku, category: p.category,
+      costPrice: parseFloat(p.cost_price), sellingPrice: parseFloat(p.selling_price),
+      stock: p.stock, minStock: p.min_stock, unit: p.unit
+    }));
+
+    QB.doneLoading();
+    closeModal();
+    renderInv();
+    toast('Product saved ✓', 'ok');
+  } catch(err) {
+    QB.doneLoading();
+    QB.error(err, 'Failed to save product');
+  }
+};
+
+// ── OVERRIDE: Expenses ────────────────────────────────────────
+const _origSaveExp = window.saveExp;
+window.saveExp = async function() {
+  QB.loading('Saving expense…');
+  try {
+    const exp = {
+      id: el('exp-id')?.value || undefined,
+      category: el('exp-cat')?.value,
+      amount: parseFloat(el('exp-amt')?.value) || 0,
+      date: el('exp-date')?.value || new Date().toISOString().slice(0,10),
+      notes: el('exp-notes')?.value || '',
+    };
+    if (!exp.amount) { toast('Enter amount', 'e'); QB.doneLoading(); return; }
+    await QB.saveExpense(exp);
+    const exps = await QB.loadExpenses();
+    S.exps = exps.map(e => ({
+      id: e.id, category: e.category, amount: parseFloat(e.amount),
+      date: e.date, notes: e.notes
+    }));
+    QB.doneLoading();
+    closeModal();
+    rexp();
+    toast('Expense saved ✓', 'ok');
+  } catch(err) {
+    QB.doneLoading();
+    QB.error(err, 'Failed to save expense');
+  }
+};
+
+const _origDelExp = window.delExp;
+window.delExp = async function(id) {
+  if (!confirm('Delete this expense?')) return;
+  QB.loading('Deleting…');
+  try {
+    await QB.deleteExpense(id);
+    S.exps = S.exps.filter(e => e.id !== id);
+    QB.doneLoading();
+    rexp();
+    toast('Expense deleted', 'ok');
+  } catch(err) {
+    QB.doneLoading();
+    QB.error(err, 'Delete failed');
+  }
+};
+
+// ── OVERRIDE: Packages ────────────────────────────────────────
+const _origSavePkg = window.savePkg;
+window.savePkg = async function() {
+  QB.loading('Saving package…');
+  try {
+    const svcs = [];
+    document.querySelectorAll('.pkg-svc:checked').forEach(cb => svcs.push(cb.value));
+    const pkg = {
+      id: el('pkg-id')?.value || undefined,
+      name: el('pkg-name')?.value?.trim(),
+      description: el('pkg-desc')?.value?.trim() || '',
+      price: parseFloat(el('pkg-price')?.value) || 0,
+      discount: parseFloat(el('pkg-disc')?.value) || 0,
+      validity: parseInt(el('pkg-validity')?.value) || 30,
+      active: el('pkg-active')?.checked !== false,
+      services: svcs,
+      categories: []
+    };
+    await QB.savePackage(pkg);
+    S.packages = (await QB.loadPackages()).map(p => ({
+      id: p.id, name: p.name, desc: p.description,
+      price: parseFloat(p.price), discount: parseFloat(p.discount),
+      validity: p.validity, active: p.active,
+      services: Array.isArray(p.services) ? p.services : JSON.parse(p.services || '[]'),
+      categories: Array.isArray(p.categories) ? p.categories : JSON.parse(p.categories || '[]')
+    }));
+    QB.doneLoading(); closeModal(); renderPkg(); toast('Package saved ✓', 'ok');
+  } catch(err) { QB.doneLoading(); QB.error(err, 'Save failed'); }
+};
+
+// ── OVERRIDE: Offers ──────────────────────────────────────────
+const _origSaveOffer = window.saveOffer;
+window.saveOffer = async function() {
+  QB.loading('Saving offer…');
+  try {
+    const offer = {
+      id: el('of-id')?.value || undefined,
+      name: el('of-name')?.value?.trim(),
+      type: el('of-type')?.value,
+      value: parseFloat(el('of-val')?.value) || 0,
+      start_date: el('of-start')?.value || null,
+      end_date: el('of-end')?.value || null,
+      coupon: el('of-coupon')?.value?.trim() || null,
+      usage_limit: parseInt(el('of-limit')?.value) || 0,
+      active: el('of-active')?.checked !== false,
+      services: [], categories: []
+    };
+    await QB.saveOffer(offer);
+    S.offers = (await QB.loadOffers()).map(o => ({
+      id: o.id, name: o.name, type: o.type, value: parseFloat(o.value),
+      startDate: o.start_date, endDate: o.end_date, coupon: o.coupon,
+      usageLimit: o.usage_limit, usedCount: o.used_count, active: o.active,
+      services: [], categories: []
+    }));
+    QB.doneLoading(); closeModal(); renderOffers(); toast('Offer saved ✓', 'ok');
+  } catch(err) { QB.doneLoading(); QB.error(err, 'Save failed'); }
+};
+
+// ── OVERRIDE: Staff save ──────────────────────────────────────
+const _origSaveStaff = window.saveStaff;
+window.saveStaff = async function() {
+  QB.loading('Saving staff…');
+  try {
+    const s = {
+      id: el('sm-id')?.value || undefined,
+      name: el('sm-name')?.value?.trim(),
+      phone: el('sm-phone')?.value?.trim(),
+      role: el('sm-role')?.value || 'Staff',
+      basic: parseFloat(el('sm-basic')?.value) || 0,
+      hra: parseFloat(el('sm-hra')?.value) || 0,
+      allowances: parseFloat(el('sm-allow')?.value) || 0,
+      join_date: el('sm-join')?.value || null
+    };
+    await QB.saveStaff(s);
+    S.staff = (await QB.loadStaff()).map(st => ({
+      id: st.id, name: st.name, phone: st.phone, role: st.role,
+      basic: parseFloat(st.basic), hra: parseFloat(st.hra),
+      allowances: parseFloat(st.allowances), joinDate: st.join_date
+    }));
+    QB.doneLoading(); closeModal(); renderPayroll(); toast('Staff saved ✓', 'ok');
+  } catch(err) { QB.doneLoading(); QB.error(err, 'Save failed'); }
+};
+
+// ── OVERRIDE: Admin config save ───────────────────────────────
+const _origSaveAdmCfg = window.saveAdmCfg;
+window.saveAdmCfg = async function() {
+  QB.loading('Saving settings…');
+  try {
+    const updates = {
+      biz_name:         CFG.bizName,
+      biz_phone:        CFG.bizPhone,
+      biz_addr:         CFG.bizAddr,
+      gst_rate:         CFG.gstRate,
+      currency:         CFG.currency,
+      points_per_rupee: CFG.pointsPerRupee,
+      point_value:      CFG.pointValue,
+      point_expiry:     CFG.pointExpiry,
+      loyalty_enabled:  CFG.loyaltyEnabled,
+      cctv_dedup_mins:  CFG.cctvDedupMins,
+      cctv_min_conf:    CFG.cctvMinConf,
+      cctv_scan_interval: CFG.cctvScanInterval,
+    };
+    await Promise.all(Object.entries(updates).map(([k,v]) => QB.saveConfig(k, v)));
+    QB.doneLoading();
+    toast('Settings saved ✓', 'ok');
+  } catch(err) { QB.doneLoading(); QB.error(err, 'Save failed'); }
+};
+
+// ── REALTIME SUBSCRIPTIONS ────────────────────────────────────
+function sbSetupRealtime() {
+  // Service log updates
+  QB.subscribe('service_logs', (payload) => {
+    if (payload.eventType === 'UPDATE') {
+      const idx = S.sl.findIndex(l => l.id === payload.new.id);
+      if (idx !== -1) {
+        S.sl[idx] = { ...S.sl[idx], ...mapDbLog(payload.new) };
+      } else {
+        S.sl.unshift(mapDbLog(payload.new));
+      }
+      // Refresh relevant pages
+      if (document.getElementById('pg-service-log')?.classList.contains('on')) renderSL();
+      if (document.getElementById('pg-dashboard')?.classList.contains('on')) rdash();
+    }
+    if (payload.eventType === 'INSERT') {
+      S.sl.unshift(mapDbLog(payload.new));
+      if (document.getElementById('pg-service-log')?.classList.contains('on')) renderSL();
+    }
+  });
+
+  // CCTV realtime detections
+  QB.subscribe('cctv_detections', (payload) => {
+    if (payload.eventType === 'INSERT') {
+      const det = {
+        id: payload.new.id, plate: payload.new.plate,
+        camId: payload.new.camera_id, camName: payload.new.camera_name,
+        location: payload.new.location, conf: payload.new.confidence,
+        status: payload.new.status, at: payload.new.detected_at
+      };
+      // Avoid duplicates from our own inserts
+      if (!S.detections.find(d => d.id === det.id)) {
+        S.detections.unshift(det);
+        if (el('live-det-feed')) updateLiveFeed(det);
+      }
+    }
+  });
+
+  // Inventory stock changes
+  QB.subscribe('inventory_products', (payload) => {
+    if (payload.eventType === 'UPDATE') {
+      const idx = S.products.findIndex(p => p.id === payload.new.id);
+      if (idx !== -1) S.products[idx].stock = payload.new.stock;
+      if (document.getElementById('pg-inventory')?.classList.contains('on')) renderInv();
+    }
+  });
+
+  console.log('[QuickWash] Realtime subscriptions active ✓');
+}
+
+// ── CHECK SESSION ON LOAD ─────────────────────────────────────
+(async function() {
+  // Auto-login if valid session exists
+  const session = await QB.verifySession();
+  if (session) {
+    QB.setCurrentUser(session);
+    S.user = { id: session.user_id, name: session.user_name, role: session.role };
+    try {
+      await sbBootstrapApp();
+      el('app').classList.add('on');
+      el('lw').style.display = 'none';
+      rdash();
+      startCCTVAutoScan();
+      sbSetupRealtime();
+      console.log('[QuickWash] Auto-login from saved session ✓');
+    } catch(e) { console.warn('[QuickWash] Session restore failed:', e.message); }
+  }
+})();
+
+console.log('[QuickWash] Supabase patch loaded ✓');
+
 </script>
 </body>
 </html>
