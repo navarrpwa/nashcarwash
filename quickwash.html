@@ -869,7 +869,7 @@ async function sbLoadConfig() {
 }
 
 async function sbSaveConfig(key, value) {
-  await sbQ('app_config').upsert({ key, value, updated_at: new Date().toISOString() });
+  try { await sbQ('app_config').upsert({ key, value, updated_at: new Date().toISOString() }); } catch(e){}
 }
 
 // ── VEHICLE TYPES & CATEGORIES ───────────────────────────────
@@ -887,10 +887,10 @@ async function sbLoadServices() {
 }
 
 async function sbSaveServicePrice(serviceId, catId, price) {
-  await sbQ('wash_service_prices').upsert({
+  try { await sbQ('wash_service_prices').upsert({
     service_id: serviceId, vehicle_category_id: catId, price,
     updated_at: new Date().toISOString()
-  }, { onConflict: 'service_id,vehicle_category_id' });
+  }); } catch(e){}
 }
 
 async function sbSaveService(svc) {
@@ -950,10 +950,11 @@ async function sbSaveCustomer(cust) {
 }
 
 async function sbAddPlate(customerId, plate) {
-  await sbQ('customer_plates').upsert(
-    { customer_id: customerId, plate: plate.toUpperCase() },
-    { onConflict: 'customer_id,plate' }
-  );
+  try {
+    await sbQ('customer_plates').insert({
+      customer_id: customerId, plate: plate.toUpperCase()
+    });
+  } catch(e) { /* duplicate — ignore */ }
 }
 
 // ── SERVICE LOGS ──────────────────────────────────────────────
@@ -1034,12 +1035,14 @@ async function sbCreateServiceEntry(payload) {
         last_visit: new Date().toISOString()
       }).eq('id', payload.customer_id);
     }
-    // Add plate
-    if (payload.plate) {
-      await sbQ('customer_plates').upsert(
-        { customer_id: payload.customer_id, plate: payload.plate.toUpperCase() },
-        { onConflict: 'customer_id,plate', ignoreDuplicates: true }
-      ).catch(()=>{});
+    // Add plate to customer
+    if (payload.plate && payload.customer_id) {
+      try {
+        await sbQ('customer_plates').insert({
+          customer_id: payload.customer_id,
+          plate: payload.plate.toUpperCase()
+        });
+      } catch(pe) { /* plate may already exist — ignore */ }
     }
   }
 
@@ -1225,10 +1228,19 @@ async function sbLoadAttendance(month) {
 }
 
 async function sbMarkAttendance(staffId, date, status, inTime, outTime) {
-  await sbQ('attendance').upsert({
-    staff_id: staffId, date, status, in_time: inTime || null, out_time: outTime || null,
+  // Try update first; insert if no row exists
+  const { data } = await sbQ('attendance').update({
+    status, in_time: inTime||null, out_time: outTime||null,
     updated_at: new Date().toISOString()
-  }, { onConflict: 'staff_id,date' });
+  }).eq('staff_id', staffId).eq('date', date).select();
+  if (!data || !data.length) {
+    try {
+      await sbQ('attendance').insert({
+        staff_id: staffId, date, status,
+        in_time: inTime||null, out_time: outTime||null
+      });
+    } catch(e) {}
+  }
 }
 
 // ── EXPENSES ──────────────────────────────────────────────────
@@ -2719,7 +2731,12 @@ function poscheckout(){
   // Deduct stock in DB
   posItems.forEach(item => {
     const dbId = item._dbId || (typeof item.id==='string'&&item.id.length>10?item.id:null);
-    if(dbId) dbSave('updateStock',[dbId,-item.qty],'POS stock deduct').catch(()=>{});
+    if(dbId && typeof sbQ==='function'){
+      sbQ('inventory_products').select('stock').eq('id',dbId).single()
+        .then(({data:p})=>{
+          if(p) sbQ('inventory_products').update({stock:Math.max(0,(p.stock||0)-item.qty),updated_at:new Date().toISOString()}).eq('id',dbId).catch(()=>{});
+        }).catch(()=>{});
+    }
   });
 }
 // ══════════════════════════════════════════════════════════
@@ -3037,7 +3054,12 @@ function mAllPresent(){
     else{a.status='present';a.inTime=a.inTime||'09:00';}
     // Sync each to DB
     if(typeof QB!=='undefined'&&sbGetToken()){
-      dbSave('markAttendance',[s.id,today,'present','09:00',a.outTime||null],'Mark all present').catch(()=>{});
+      // Direct DB for mark all present
+      sbQ('attendance').update({status:'present',in_time:'09:00',updated_at:new Date().toISOString()})
+        .eq('staff_id',s.id).eq('date',today)
+        .then(async({data})=>{
+          if(!data?.length) try{await sbQ('attendance').insert({staff_id:s.id,date:today,status:'present',in_time:'09:00'});}catch(e){}
+        }).catch(()=>{});
     }
   });
   toast('All marked present ✓','ok');renderPayroll();
@@ -3129,7 +3151,7 @@ function sexp(id){
     const e=S.exps.find(x=>String(x.id)===String(id));
     if(e){e.cat=c;e.category=c;e.amt=a;e.amount=a;e.date=dateStr;e.notes=n;}
     toast('Updated ✓','ok');
-    if(typeof dbSave==='function') dbSave('saveExpense',[{id,category:c,amount:a,date:dateStr,notes:n}],'Edit expense').catch(()=>{});
+    
   } else {
     const newExp={id:Date.now(),cat:c,category:c,amt:a,amount:a,date:dateStr,notes:n||''};
     S.exps.push(newExp);
@@ -3147,7 +3169,7 @@ function dexp(id){
   toast('Deleted ✓','ok');rexp();
   const isUUID=typeof id==='string'&&id.length>10;
   if(isUUID&&typeof dbSave==='function'){
-    dbSave('deleteExpense',[id],'Delete expense').catch(()=>{});
+    if(typeof sbQ==='function') sbQ('expenses').delete().eq('id',id).catch(()=>{});
   }
 }
 
