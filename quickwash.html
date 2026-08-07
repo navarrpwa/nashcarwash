@@ -2399,8 +2399,19 @@ function poscheckout(){
   S.txns.push({id:S.txns.length+1,rcpt:'POS'+String(S.txns.length+1).padStart(5,'0'),type:'product',plate:'—',svcs:S.posCart.map(i=>i.name),tot,pay:el('pospy')?.value||'cash',status:'completed',date:new Date().toISOString(),custId:S.posCust?.id||null});
   if(pts>0)toast('+'+pts+' loyalty points awarded','ok');
   toast('Sale complete!','ok');
-  S.posCart=[];S.posCust=null;if(el('pos-cs'))el('pos-cs').style.display='none';if(el('pos-loyalty'))el('pos-loyalty').style.display='none';if(el('pos-cq'))el('pos-cq').value='';
+  // ── Save POS sale to Supabase ────────────────────────────────
+  const posItems = [...S.posCart];
+  const posCustId = S.posCust?.id || null;
+  S.posCart=[];S.posCust=null;
+  if(el('pos-cs'))el('pos-cs').style.display='none';
+  if(el('pos-loyalty'))el('pos-loyalty').style.display='none';
+  if(el('pos-cq'))el('pos-cq').value='';
   renderPosCart();rpos();
+  // Deduct stock in DB
+  posItems.forEach(item => {
+    const dbId = item._dbId || (typeof item.id==='string'&&item.id.length>10?item.id:null);
+    if(dbId) dbSave('updateStock',[dbId,-item.qty],'POS stock deduct').catch(()=>{});
+  });
 }
 // ══════════════════════════════════════════════════════════
 // CUSTOMERS
@@ -4970,43 +4981,7 @@ window.ignoreDet = async function(id) {
   } catch(err) { QB.error(err, 'Failed to update detection'); }
 };
 
-// ── OVERRIDE: Inventory save ──────────────────────────────────
-const _origSaveProd = window.saveProd;
-window.saveProd = async function() {
-  QB.loading('Saving product…');
-  try {
-    const prod = {
-      id: el('pm-id')?.value || null,
-      name: el('pm-name')?.value?.trim(),
-      sku: el('pm-sku')?.value?.trim() || null,
-      category: el('pm-cat')?.value || 'accessories',
-      selling_price: parseFloat(el('pm-price')?.value) || 0,
-      cost_price: parseFloat(el('pm-cost')?.value) || 0,
-      stock: parseInt(el('pm-stock')?.value) || 0,
-      min_stock: parseInt(el('pm-min')?.value) || 5,
-      unit: el('pm-unit')?.value || 'pcs',
-    };
-    if (!prod.name) { toast('Product name required', 'e'); QB.doneLoading(); return; }
-    const saved = await QB.saveProduct(prod);
-    if (saved) prod.id = saved.id;
-
-    // Refresh
-    const products = await QB.loadInventory();
-    S.products = products.map(p => ({
-      id: p.id, name: p.name, sku: p.sku, category: p.category,
-      costPrice: parseFloat(p.cost_price), sellingPrice: parseFloat(p.selling_price),
-      stock: p.stock, minStock: p.min_stock, unit: p.unit
-    }));
-
-    QB.doneLoading();
-    closeModal();
-    renderInv();
-    toast('Product saved ✓', 'ok');
-  } catch(err) {
-    QB.doneLoading();
-    QB.error(err, 'Failed to save product');
-  }
-};
+// REMOVED: duplicate saveProd override (replaced by saveInv fix below)
 
 // ── OVERRIDE: Expenses ────────────────────────────────────────
 const _origSaveExp = window.saveExp;
@@ -5054,112 +5029,16 @@ window.delExp = async function(id) {
 };
 
 // ── OVERRIDE: Packages ────────────────────────────────────────
-const _origSavePkg = window.savePkg;
-window.savePkg = async function() {
-  QB.loading('Saving package…');
-  try {
-    const svcs = [];
-    document.querySelectorAll('.pkg-svc:checked').forEach(cb => svcs.push(cb.value));
-    const pkg = {
-      id: el('pkg-id')?.value || undefined,
-      name: el('pkg-name')?.value?.trim(),
-      description: el('pkg-desc')?.value?.trim() || '',
-      price: parseFloat(el('pkg-price')?.value) || 0,
-      discount: parseFloat(el('pkg-disc')?.value) || 0,
-      validity: parseInt(el('pkg-validity')?.value) || 30,
-      active: el('pkg-active')?.checked !== false,
-      services: svcs,
-      categories: []
-    };
-    await QB.savePackage(pkg);
-    S.packages = (await QB.loadPackages()).map(p => ({
-      id: p.id, name: p.name, desc: p.description,
-      price: parseFloat(p.price), discount: parseFloat(p.discount),
-      validity: p.validity, active: p.active,
-      services: Array.isArray(p.services) ? p.services : JSON.parse(p.services || '[]'),
-      categories: Array.isArray(p.categories) ? p.categories : JSON.parse(p.categories || '[]')
-    }));
-    QB.doneLoading(); closeModal(); renderPkg(); toast('Package saved ✓', 'ok');
-  } catch(err) { QB.doneLoading(); QB.error(err, 'Save failed'); }
-};
+// savePkg: handled by offline-queue patch below
 
-// ── OVERRIDE: Offers ──────────────────────────────────────────
-const _origSaveOffer = window.saveOffer;
-window.saveOffer = async function() {
-  QB.loading('Saving offer…');
-  try {
-    const offer = {
-      id: el('of-id')?.value || undefined,
-      name: el('of-name')?.value?.trim(),
-      type: el('of-type')?.value,
-      value: parseFloat(el('of-val')?.value) || 0,
-      start_date: el('of-start')?.value || null,
-      end_date: el('of-end')?.value || null,
-      coupon: el('of-coupon')?.value?.trim() || null,
-      usage_limit: parseInt(el('of-limit')?.value) || 0,
-      active: el('of-active')?.checked !== false,
-      services: [], categories: []
-    };
-    await QB.saveOffer(offer);
-    S.offers = (await QB.loadOffers()).map(o => ({
-      id: o.id, name: o.name, type: o.type, value: parseFloat(o.value),
-      startDate: o.start_date, endDate: o.end_date, coupon: o.coupon,
-      usageLimit: o.usage_limit, usedCount: o.used_count, active: o.active,
-      services: [], categories: []
-    }));
-    QB.doneLoading(); closeModal(); renderOffers(); toast('Offer saved ✓', 'ok');
-  } catch(err) { QB.doneLoading(); QB.error(err, 'Save failed'); }
-};
+// saveOffer: handled by offline-queue patch below
 
-// ── OVERRIDE: Staff save ──────────────────────────────────────
-const _origSaveStaff = window.saveStaff;
-window.saveStaff = async function() {
-  QB.loading('Saving staff…');
-  try {
-    const s = {
-      id: el('sm-id')?.value || undefined,
-      name: el('sm-name')?.value?.trim(),
-      phone: el('sm-phone')?.value?.trim(),
-      role: el('sm-role')?.value || 'Staff',
-      basic: parseFloat(el('sm-basic')?.value) || 0,
-      hra: parseFloat(el('sm-hra')?.value) || 0,
-      allowances: parseFloat(el('sm-allow')?.value) || 0,
-      join_date: el('sm-join')?.value || null
-    };
-    await QB.saveStaff(s);
-    S.staff = (await QB.loadStaff()).map(st => ({
-      id: st.id, name: st.name, phone: st.phone, role: st.role,
-      basic: parseFloat(st.basic), hra: parseFloat(st.hra),
-      allowances: parseFloat(st.allowances), joinDate: st.join_date
-    }));
-    QB.doneLoading(); closeModal(); renderPayroll(); toast('Staff saved ✓', 'ok');
-  } catch(err) { QB.doneLoading(); QB.error(err, 'Save failed'); }
-};
+// saveStaff: handled by offline-queue patch
+
 
 // ── OVERRIDE: Admin config save ───────────────────────────────
-const _origSaveAdmCfg = window.saveAdmCfg;
-window.saveAdmCfg = async function() {
-  QB.loading('Saving settings…');
-  try {
-    const updates = {
-      biz_name:         CFG.bizName,
-      biz_phone:        CFG.bizPhone,
-      biz_addr:         CFG.bizAddr,
-      gst_rate:         CFG.gstRate,
-      currency:         CFG.currency,
-      points_per_rupee: CFG.pointsPerRupee,
-      point_value:      CFG.pointValue,
-      point_expiry:     CFG.pointExpiry,
-      loyalty_enabled:  CFG.loyaltyEnabled,
-      cctv_dedup_mins:  CFG.cctvDedupMins,
-      cctv_min_conf:    CFG.cctvMinConf,
-      cctv_scan_interval: CFG.cctvScanInterval,
-    };
-    await Promise.all(Object.entries(updates).map(([k,v]) => QB.saveConfig(k, v)));
-    QB.doneLoading();
-    toast('Settings saved ✓', 'ok');
-  } catch(err) { QB.doneLoading(); QB.error(err, 'Save failed'); }
-};
+// saveAdmCfg: handled by offline-queue patch
+
 
 // ── REALTIME SUBSCRIPTIONS ────────────────────────────────────
 function sbSetupRealtime() {
@@ -5452,19 +5331,22 @@ window.addEventListener('offline', () => {
 // ── Quick-add customer (Vehicle Entry) ───────────────────────
 const _origSaveQA = window.saveQA;
 window.saveQA = async function() {
-  const n = el('qc-n')?.value?.trim();
-  const p = el('qc-p')?.value?.trim();
+  const n = el('qa-n')?.value?.trim();   // ← correct IDs: qa-n, qa-p
+  const p = el('qa-p')?.value?.trim();
   if (!n || !p) { toast('Name and phone required', 'e'); return; }
-  // Local save first (instant)
-  const c = { id: S.customers.length + 1, name: n, phone: p, email: '', plates: [S.W.plate||''],
+  const plate = S.W?.plate || '';
+  const c = { id: Date.now(), name: n, phone: p, email: '', plates: plate?[plate]:[],
                visits: 0, totalSpent: 0, lastVisit: new Date().toISOString(),
                points: 0, notes: '', loyaltyHistory: [] };
   S.customers.push(c); S.W.custId = c.id; S.W.cust = c;
-  if(typeof renderStep1==='function') renderStep1();
+  el('qa-wrap').style.display = 'none';
+  if (el('plate-result')) el('plate-result').innerHTML = `<div style="background:var(--glt);border:1px solid var(--green);border-radius:var(--r2);padding:10px 14px;margin-top:10px"><div style="font-size:12px;font-weight:800;color:var(--green)">✓ Customer: ${n}</div><div style="font-size:11px;color:var(--ink3)">📞 ${p}</div></div>`;
+  el('btn0').disabled = false;
   toast('Customer added ✓', 'ok');
   // DB save
-  const saved = await dbSave('saveCustomer', [{ name: n, phone: p, plate: S.W.plate }], 'Add customer: ' + n);
-  if (saved) { c.id = saved.id; S.W.custId = saved.id; }
+  dbSave('saveCustomer', [{ name: n, phone: p, plate }], 'Add customer: ' + n)
+    .then(saved => { if (saved?.id) { c.id = saved.id; S.W.custId = saved.id; } })
+    .catch(()=>{});
 };
 
 // ── Service Log Edit ──────────────────────────────────────────
@@ -5513,46 +5395,54 @@ window.saveSlEdit = async function(id) {
 // ── Supplier save ─────────────────────────────────────────────
 const _origSaveSup2 = window.saveSup;
 window.saveSup = async function(id) {
-  const name = el('sup-name')?.value?.trim();
+  const name = el('sm-n')?.value?.trim();  // ← correct IDs
   if (!name) { toast('Supplier name required', 'e'); return; }
-  const data = { name, contact: el('sup-contact')?.value||'', phone: el('sup-phone')?.value||'',
-                 email: el('sup-email')?.value||'', address: el('sup-addr')?.value||'' };
-  if (id) { // edit
-    const s = S.suppliers.find(x=>x.id===id); if(s) Object.assign(s, data);
-    data.id = id;
-  } else { // add
+  const data = {
+    name,
+    contact:  el('sm-c')?.value  || '',
+    phone:    el('sm-ph')?.value || '',
+    email:    el('sm-em')?.value || '',
+    address:  el('sm-ad')?.value || ''
+  };
+  if (id && id !== 'null') {
+    const s = S.suppliers.find(x => x.id === id); if (s) Object.assign(s, data);
+    data.id = id; toast('Updated ✓', 'ok');
+  } else {
     data.id = S.suppliers.length + 1;
     S.suppliers.push({ ...data, outstanding: 0 });
+    toast('Supplier added ✓', 'ok');
   }
-  closeModal(); renderSup(); toast('Supplier saved ✓', 'ok');
-  await dbSave('saveSupplier', [data], (id?'Edit':'Add')+' supplier: '+name);
+  closeModal(); renderSup();
+  await dbSave('saveSupplier', [data], (id&&id!=='null'?'Edit':'Add') + ' supplier: ' + name);
 };
 
 // ── Inventory save ────────────────────────────────────────────
 const _origSaveInv2 = window.saveInv;
 window.saveInv = async function(id) {
-  const name = el('inv-name')?.value?.trim();
+  const name = el('ip-n')?.value?.trim();   // correct IDs: ip-*
   if (!name) { toast('Product name required', 'e'); return; }
   const data = {
-    name, sku: el('inv-sku')?.value||null, category: el('inv-cat')?.value||'accessories',
-    brand: el('inv-brand')?.value||'', selling_price: parseFloat(el('inv-price')?.value)||0,
-    cost_price: parseFloat(el('inv-cost')?.value)||0, stock: parseInt(el('inv-stock')?.value)||0,
-    min_stock: parseInt(el('inv-min')?.value)||5, unit: el('inv-unit')?.value||'pcs'
+    name, sku: el('ip-sku')?.value||null, category: el('ip-cat')?.value||'accessories',
+    brand: el('ip-brand')?.value||'', selling_price: parseFloat(el('ip-sell')?.value)||0,
+    cost_price: parseFloat(el('ip-cost')?.value)||0, stock: parseInt(el('ip-stk')?.value)||0,
+    min_stock: parseInt(el('ip-min')?.value)||5, max_stock: parseInt(el('ip-max')?.value)||100,
+    unit: el('ip-unit')?.value||'pcs', supplier_id: parseInt(el('ip-sup')?.value)||null
   };
-  if (id) {
+  if (id && id !== 'null') {
     const p = S.products.find(x=>x.id===id);
-    if (p) Object.assign(p, { name:data.name, sku:data.sku, category:data.category,
-      sellingPrice:data.selling_price, costPrice:data.cost_price, stock:data.stock,
-      minStock:data.min_stock, unit:data.unit });
-    data.id = id;
+    if (p) Object.assign(p, { name:data.name, sku:data.sku, cat:data.category,
+      brand:data.brand, sellingPrice:data.selling_price, costPrice:data.cost_price,
+      stock:data.stock, minStock:data.min_stock, unit:data.unit });
+    data.id = id; toast('Product updated ✓','ok');
   } else {
-    const newP = { id:S.products.length+1, name:data.name, sku:data.sku,
-      category:data.category, sellingPrice:data.selling_price, costPrice:data.cost_price,
-      stock:data.stock, minStock:data.min_stock, unit:data.unit, brand:data.brand };
-    S.products.push(newP);
+    S.products.push({ id:Date.now(), name:data.name, sku:data.sku,
+      cat:data.category, brand:data.brand, supplierId:data.supplier_id,
+      sellingPrice:data.selling_price, costPrice:data.cost_price,
+      stock:data.stock, minStock:data.min_stock, unit:data.unit, barcode:'' });
+    toast('Product added ✓','ok');
   }
-  closeModal(); renderInv(); toast('Product saved ✓', 'ok');
-  await dbSave('saveProduct', [data], (id?'Edit':'Add')+' product: '+name);
+  closeModal(); renderInv();
+  await dbSave('saveProduct', [data], (id&&id!=='null'?'Edit':'Add')+' product: '+name);
 };
 
 // ── Purchase Order save ───────────────────────────────────────
@@ -5560,15 +5450,15 @@ const _origSavePO2 = window.savePO;
 window.savePO = async function() {
   const supId = el('po-sup')?.value;
   const date  = el('po-date')?.value || new Date().toISOString().slice(0,10);
-  const rows  = document.querySelectorAll('.po-item-row');
-  if (!rows.length) { toast('Add at least one item', 'e'); return; }
+  // Collect items using poi-* IDs (matching openPurOrder modal)
   const items = []; let total = 0;
-  rows.forEach(row => {
-    const pid  = row.querySelector('.po-pid')?.value;
-    const qty  = parseInt(row.querySelector('.po-qty')?.value) || 0;
-    const cost = parseFloat(row.querySelector('.po-cost')?.value) || 0;
+  for (let i = 0; i < (window._poItems||1); i++) {
+    const pid  = el(`poi-p${i}`)?.value;
+    const qty  = parseInt(el(`poi-q${i}`)?.value) || 0;
+    const cost = parseFloat(el(`poi-c${i}`)?.value) || 0;
     if (pid && qty > 0) { items.push({ product_id: pid, qty, unit_cost: cost }); total += qty * cost; }
-  });
+  }
+  if (!items.length) { toast('Add at least one item', 'e'); return; }
   if (!items.length) { toast('Add valid items', 'e'); return; }
   // Local save
   const id = S.purchaseOrders.length + 1;
@@ -5585,21 +5475,31 @@ window.savePO = async function() {
 // ── Staff save ────────────────────────────────────────────────
 const _origSaveStaff2 = window.saveStaff;
 window.saveStaff = async function(id) {
-  const name = el('sf-name')?.value?.trim();
-  if (!name) { toast('Name required', 'e'); return; }
-  const data = { name, phone: el('sf-phone')?.value||'', role: el('sf-role')?.value||'Staff',
-                 basic: parseFloat(el('sf-basic')?.value)||0, hra: parseFloat(el('sf-hra')?.value)||0,
-                 allowances: parseFloat(el('sf-allow')?.value)||0, join_date: el('sf-join')?.value||null };
-  if (id) {
-    const s = S.staff.find(x=>x.id===id);
+  const name = el('sf-n')?.value?.trim();   // ← correct IDs
+  const phone = el('sf-p')?.value?.trim();
+  if (!name || !phone) { toast('Name and phone required', 'e'); return; }
+  const data = {
+    name, phone,
+    role:       el('sf-r')?.value || 'Staff',
+    basic:      parseFloat(el('sf-b')?.value) || 0,
+    hra:        parseFloat(el('sf-h')?.value) || 0,
+    allowances: parseFloat(el('sf-a')?.value) || 0,
+    join_date:  el('sf-j')?.value || null,
+    active:     true
+  };
+  if (id && id !== 'null') {
+    const s = S.staff.find(x => x.id === id);
     if (s) Object.assign(s, { name:data.name, phone:data.phone, role:data.role,
       basic:data.basic, hra:data.hra, allowances:data.allowances, joinDate:data.join_date });
-    data.id = id;
+    data.id = id; toast('Updated ✓', 'ok');
   } else {
-    S.staff.push({ id:S.staff.length+1, ...data, joinDate:data.join_date });
+    S.staff.push({ id: S.staff.length + 1, name:data.name, phone:data.phone,
+      role:data.role, basic:data.basic, hra:data.hra, allowances:data.allowances,
+      joinDate:data.join_date, active:true });
+    toast('Staff added ✓', 'ok');
   }
-  closeModal(); renderPayroll(); toast('Staff saved ✓', 'ok');
-  await dbSave('saveStaff', [data], (id?'Edit':'Add')+' staff: '+name);
+  closeModal(); renderPayroll();
+  await dbSave('saveStaff', [data], (id&&id!=='null'?'Edit':'Add') + ' staff: ' + name);
 };
 
 // ── Attendance mark ───────────────────────────────────────────
@@ -5668,25 +5568,26 @@ window.savePkg = async function(id) {
 // ── Offer save ────────────────────────────────────────────────
 const _origSaveOffer2 = window.saveOffer;
 window.saveOffer = async function(id) {
-  const name = el('of-name')?.value?.trim();
+  const name = el('of-n')?.value?.trim();  // correct IDs: of-*
   if (!name) { toast('Offer name required', 'e'); return; }
-  const data = { name, type: el('of-type')?.value||'percentage',
-                 value: parseFloat(el('of-val')?.value)||0,
-                 start_date: el('of-start')?.value||null, end_date: el('of-end')?.value||null,
-                 coupon: el('of-coupon')?.value?.trim()||null,
-                 usage_limit: parseInt(el('of-limit')?.value)||0,
-                 active: el('of-active')?.checked !== false, services:[], categories:[] };
-  if (id) {
+  const data = { name, type: el('of-t')?.value||'percentage',
+                 value: parseFloat(el('of-v')?.value)||0,
+                 start_date: el('of-sd')?.value||null, end_date: el('of-ed')?.value||null,
+                 coupon: el('of-c')?.value?.trim()||null,
+                 usage_limit: parseInt(el('of-ul')?.value)||0,
+                 active: el('of-act')?.value==='true', services:[], categories:[] };
+  if (id && id !== 'null') {
     const o = S.offers.find(x=>x.id===id);
     if (o) Object.assign(o, { name:data.name, type:data.type, value:data.value,
       startDate:data.start_date, endDate:data.end_date, coupon:data.coupon, active:data.active });
-    data.id = id;
+    data.id = id; toast('Offer updated ✓','ok');
   } else {
-    S.offers.push({ id:S.offers.length+1, name:data.name, type:data.type, value:data.value,
+    S.offers.push({ id:Date.now(), name:data.name, type:data.type, value:data.value,
       startDate:data.start_date, endDate:data.end_date, coupon:data.coupon,
       usageLimit:data.usage_limit, usedCount:0, active:data.active, services:[], categories:[] });
+    toast('Offer created ✓','ok');
   }
-  closeModal(); renderOffers(); toast('Offer saved ✓', 'ok');
+  closeModal(); renderOffers();
   await dbSave('saveOffer', [data], (id?'Edit':'Add')+' offer: '+name);
 };
 
