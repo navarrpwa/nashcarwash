@@ -5232,6 +5232,584 @@ function sbSetupRealtime() {
 
 console.log('[QuickWash] Supabase patch loaded ✓');
 
+// ============================================================
+// OFFLINE QUEUE + COMPLETE DB SYNC
+// Saves every operation to IndexedDB when offline.
+// Auto-syncs all queued ops when internet returns.
+// ============================================================
+
+// ── Offline Queue (IndexedDB) ─────────────────────────────────
+const OQ_STORE = 'qw_offline_queue';
+let _oqDb = null;
+
+async function oqInit() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open('QuickWashOffline', 1);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(OQ_STORE))
+        db.createObjectStore(OQ_STORE, { keyPath: 'id', autoIncrement: true });
+    };
+    req.onsuccess = e => { _oqDb = e.target.result; res(_oqDb); };
+    req.onerror   = () => rej(req.error);
+  });
+}
+
+async function oqPush(op) {
+  // op = { fn, args, label, at }
+  if (!_oqDb) await oqInit();
+  return new Promise((res, rej) => {
+    const tx   = _oqDb.transaction(OQ_STORE, 'readwrite');
+    const req  = tx.objectStore(OQ_STORE).add({ ...op, at: new Date().toISOString() });
+    req.onsuccess = () => { res(req.result); updateSyncBadge(); };
+    req.onerror   = () => rej(req.error);
+  });
+}
+
+async function oqGetAll() {
+  if (!_oqDb) await oqInit();
+  return new Promise((res, rej) => {
+    const tx   = _oqDb.transaction(OQ_STORE, 'readonly');
+    const req  = tx.objectStore(OQ_STORE).getAll();
+    req.onsuccess = () => res(req.result);
+    req.onerror   = () => rej(req.error);
+  });
+}
+
+async function oqDelete(id) {
+  if (!_oqDb) await oqInit();
+  return new Promise((res, rej) => {
+    const tx   = _oqDb.transaction(OQ_STORE, 'readwrite');
+    const req  = tx.objectStore(OQ_STORE).delete(id);
+    req.onsuccess = () => res();
+    req.onerror   = () => rej(req.error);
+  });
+}
+
+async function oqClear() {
+  if (!_oqDb) await oqInit();
+  return new Promise((res, rej) => {
+    const tx   = _oqDb.transaction(OQ_STORE, 'readwrite');
+    const req  = tx.objectStore(OQ_STORE).clear();
+    req.onsuccess = () => res();
+    req.onerror   = () => rej(req.error);
+  });
+}
+
+// ── Sync Badge ────────────────────────────────────────────────
+async function updateSyncBadge() {
+  const items = await oqGetAll().catch(()=>[]);
+  const n = items.length;
+  let badge = document.getElementById('qw-sync-badge');
+  if (!badge) {
+    badge = document.createElement('div');
+    badge.id = 'qw-sync-badge';
+    badge.style.cssText = [
+      'position:fixed','bottom:16px','right:16px','z-index:9998',
+      'padding:8px 14px','border-radius:20px','font-size:11px','font-weight:700',
+      'display:flex','align-items:center','gap:7px','cursor:pointer',
+      'box-shadow:0 4px 14px rgba(0,0,0,.25)','transition:all .3s'
+    ].join(';');
+    badge.onclick = () => syncOfflineQueue();
+    document.body.appendChild(badge);
+  }
+  if (n === 0) {
+    badge.style.background = '#059669';
+    badge.style.color = '#fff';
+    badge.innerHTML = '☁ All synced';
+    setTimeout(() => { badge.style.opacity = '0'; badge.style.pointerEvents = 'none'; }, 3000);
+  } else {
+    badge.style.opacity = '1';
+    badge.style.pointerEvents = 'auto';
+    const online = navigator.onLine;
+    badge.style.background = online ? '#f59e0b' : '#dc2626';
+    badge.style.color = '#fff';
+    badge.innerHTML = online
+      ? `⏳ ${n} pending — tap to sync`
+      : `📴 ${n} queued — offline`;
+  }
+}
+
+// ── Sync offline queue to Supabase ────────────────────────────
+let _syncing = false;
+async function syncOfflineQueue() {
+  if (_syncing || !navigator.onLine) return;
+  const items = await oqGetAll().catch(()=>[]);
+  if (!items.length) return;
+
+  _syncing = true;
+  let synced = 0, failed = 0;
+  toast(`☁ Syncing ${items.length} queued operations…`, 'i');
+
+  for (const item of items) {
+    try {
+      await executeQueuedOp(item);
+      await oqDelete(item.id);
+      synced++;
+    } catch(err) {
+      console.error('[Sync] Failed:', item.label, err.message);
+      failed++;
+    }
+  }
+
+  _syncing = false;
+
+  if (failed === 0) {
+    toast(`✅ All ${synced} operations synced to database`, 'ok');
+    // Refresh data from DB
+    await sbBootstrapApp().catch(()=>{});
+    const page = document.querySelector('.pg.on')?.id?.replace('pg-','');
+    if (page) { const fn={dashboard:rdash,'service-log':renderSL,'completed-jobs':renderCJ,customers:renderCusts,inventory:renderInv,purchases:renderPur,expenses:rexp,payroll:renderPayroll}[page]; fn?.(); }
+  } else {
+    toast(`⚠ ${synced} synced, ${failed} failed — will retry`, 'w');
+  }
+  updateSyncBadge();
+}
+
+async function executeQueuedOp(item) {
+  const { fn, args } = item;
+  switch(fn) {
+    case 'createServiceEntry': return await QB.createServiceEntry(args[0]);
+    case 'advanceLogStatus':   return await QB.advanceLogStatus(args[0], args[1]);
+    case 'recordPayment':      return await QB.recordPayment(args[0]);
+    case 'saveCustomer':       return await QB.saveCustomer(args[0]);
+    case 'editServiceLog':     return await QB.editServiceLog(args[0], args[1], args[2]);
+    case 'saveProduct':        return await QB.saveProduct(args[0]);
+    case 'saveSupplier':       return await QB.saveSupplier(args[0]);
+    case 'saveStaff':          return await QB.saveStaff(args[0]);
+    case 'markAttendance':     return await QB.markAttendance(...args);
+    case 'saveExpense':        return await QB.saveExpense(args[0]);
+    case 'deleteExpense':      return await QB.deleteExpense(args[0]);
+    case 'savePackage':        return await QB.savePackage(args[0]);
+    case 'saveOffer':          return await QB.saveOffer(args[0]);
+    case 'saveCamera':         return await QB.saveCamera(args[0]);
+    case 'toggleCamera':       return await QB.toggleCamera(args[0], args[1]);
+    case 'saveService':        return await QB.saveService(args[0]);
+    case 'saveServicePrice':   return await QB.saveServicePrice(...args);
+    case 'createPurchaseOrder':return await QB.createPurchaseOrder(args[0], args[1]);
+    case 'receivePurchaseOrder':return await QB.receivePurchaseOrder(args[0]);
+    case 'saveConfig':         return await QB.saveConfig(args[0], args[1]);
+    default: console.warn('[Sync] Unknown op:', fn);
+  }
+}
+
+// ── DB Save helper — queue if offline, call if online ─────────
+async function dbSave(fn, args, label) {
+  if (!navigator.onLine || !sbGetToken()) {
+    // Queue for later
+    await oqPush({ fn, args, label }).catch(()=>{});
+    toast('📴 Saved offline — will sync when online', 'w');
+    return null;
+  }
+  try {
+    const result = await executeQueuedOp({ fn, args });
+    return result;
+  } catch(err) {
+    // Failed online — queue it
+    await oqPush({ fn, args, label }).catch(()=>{});
+    console.error('[DB] Save failed, queued:', label, err.message);
+    toast('⚠ DB error — queued for retry', 'w');
+    return null;
+  }
+}
+
+// ── Online/Offline handlers ───────────────────────────────────
+oqInit().catch(console.error);
+
+window.addEventListener('online', async () => {
+  toast('🟢 Back online — syncing queued data…', 'ok');
+  updateSyncBadge();
+  // Wait a moment for connection to stabilise
+  setTimeout(async () => {
+    // Reload all data from Supabase
+    if (sbGetToken()) {
+      try {
+        await sbBootstrapApp();
+        const page = document.querySelector('.pg.on')?.id?.replace('pg-','');
+        if (page) {
+          const fn={dashboard:rdash,'service-log':renderSL,'completed-jobs':renderCJ,
+                    customers:renderCusts,inventory:renderInv,purchases:renderPur,
+                    expenses:rexp,payroll:renderPayroll,cctv:renderCCTV}[page];
+          fn?.();
+        }
+        toast('☁ Data refreshed from database', 'ok');
+      } catch(e) { console.warn('[Sync] Data refresh failed:', e.message); }
+    }
+    // Sync queued operations
+    await syncOfflineQueue();
+  }, 1500);
+});
+
+window.addEventListener('offline', () => {
+  toast('📴 Offline — all changes will be saved and synced when reconnected', 'w');
+  updateSyncBadge();
+});
+
+// ============================================================
+// WIRE ALL SAVE FUNCTIONS TO SUPABASE
+// ============================================================
+
+// ── Quick-add customer (Vehicle Entry) ───────────────────────
+const _origSaveQA = window.saveQA;
+window.saveQA = async function() {
+  const n = el('qc-n')?.value?.trim();
+  const p = el('qc-p')?.value?.trim();
+  if (!n || !p) { toast('Name and phone required', 'e'); return; }
+  // Local save first (instant)
+  const c = { id: S.customers.length + 1, name: n, phone: p, email: '', plates: [S.W.plate||''],
+               visits: 0, totalSpent: 0, lastVisit: new Date().toISOString(),
+               points: 0, notes: '', loyaltyHistory: [] };
+  S.customers.push(c); S.W.custId = c.id; S.W.cust = c;
+  if(typeof renderStep1==='function') renderStep1();
+  toast('Customer added ✓', 'ok');
+  // DB save
+  const saved = await dbSave('saveCustomer', [{ name: n, phone: p, plate: S.W.plate }], 'Add customer: ' + n);
+  if (saved) { c.id = saved.id; S.W.custId = saved.id; }
+};
+
+// ── Service Log Edit ──────────────────────────────────────────
+const _origSaveSlEdit2 = window.saveSlEdit;
+window.saveSlEdit = async function(id) {
+  const l = S.sl.find(x => x.id === id); if (!l) return;
+  const checked = [...document.querySelectorAll('input[name="sl-svc"]:checked')].map(x=>x.value);
+  if (!checked.length) { toast('Select at least one service', 'e'); return; }
+  const cat = l.vcat || 'Sedan';
+  const sub = checked.reduce((a, name) => { const s = S.washSvcs.find(x=>x.name===name); return a+(s?gPrice(s,cat):0); }, 0);
+  const disc = parseFloat(el('se-disc')?.value) || 0;
+  const useTax = el('se-tax')?.value === '1';
+  const tax = useTax ? Math.round(Math.max(0,sub-disc)*CFG.gstRate/100) : 0;
+  const tot = Math.max(0, sub - disc) + tax;
+  const newStatus = el('se-status')?.value;
+  const changes = [];
+  if (JSON.stringify(l.svcs) !== JSON.stringify(checked)) changes.push('Services updated');
+  if (l.disc !== disc) changes.push(`Discount: ${frs(l.disc)}→${frs(disc)}`);
+  if (l.amount !== tot) changes.push(`Total: ${frs(l.amount)}→${frs(tot)}`);
+  if (newStatus && l.status !== newStatus) changes.push(`Status: ${l.status}→${newStatus}`);
+  // Local update
+  l.svcs = checked; l.disc = disc; l.tax = tax; l.amount = tot;
+  l.staff = el('se-staff')?.value || l.staff;
+  l.estimatedMins = parseInt(el('se-est')?.value) || l.estimatedMins || 0;
+  l.notes = el('se-notes')?.value || '';
+  if (newStatus && newStatus !== l.status) {
+    const tf = {received:'receivedAt',washing:'washingAt',interior:'interiorAt',
+                detailing:'detailingAt',qc:'qcAt',ready:'readyAt'}[newStatus];
+    l.status = newStatus; if(tf&&!l[tf]) l[tf] = new Date().toISOString();
+  }
+  if (changes.length) logEdit(l, changes.join('; '));
+  closeModal(); toast('Service log updated ✓', 'ok'); renderSL();
+  // DB save
+  const dbId = l._dbId || (typeof l.id==='string'&&l.id.length>10?l.id:null);
+  if (dbId) {
+    const svcDetails = checked.map(name => {
+      const svc = S.washSvcs.find(s => s.name === name);
+      return { log_id: dbId, service_id: svc?.id||null, service_name: name, price: svc?gPrice(svc,cat):0, qty: 1 };
+    });
+    await dbSave('editServiceLog', [dbId, { discount: disc, tax, notes: l.notes,
+      estimated_mins: l.estimatedMins, staff_name: l.staff, status: l.status, services: svcDetails },
+      S.user?.name || 'Staff'], 'Edit service log');
+  }
+};
+
+// ── Supplier save ─────────────────────────────────────────────
+const _origSaveSup2 = window.saveSup;
+window.saveSup = async function(id) {
+  const name = el('sup-name')?.value?.trim();
+  if (!name) { toast('Supplier name required', 'e'); return; }
+  const data = { name, contact: el('sup-contact')?.value||'', phone: el('sup-phone')?.value||'',
+                 email: el('sup-email')?.value||'', address: el('sup-addr')?.value||'' };
+  if (id) { // edit
+    const s = S.suppliers.find(x=>x.id===id); if(s) Object.assign(s, data);
+    data.id = id;
+  } else { // add
+    data.id = S.suppliers.length + 1;
+    S.suppliers.push({ ...data, outstanding: 0 });
+  }
+  closeModal(); renderSup(); toast('Supplier saved ✓', 'ok');
+  await dbSave('saveSupplier', [data], (id?'Edit':'Add')+' supplier: '+name);
+};
+
+// ── Inventory save ────────────────────────────────────────────
+const _origSaveInv2 = window.saveInv;
+window.saveInv = async function(id) {
+  const name = el('inv-name')?.value?.trim();
+  if (!name) { toast('Product name required', 'e'); return; }
+  const data = {
+    name, sku: el('inv-sku')?.value||null, category: el('inv-cat')?.value||'accessories',
+    brand: el('inv-brand')?.value||'', selling_price: parseFloat(el('inv-price')?.value)||0,
+    cost_price: parseFloat(el('inv-cost')?.value)||0, stock: parseInt(el('inv-stock')?.value)||0,
+    min_stock: parseInt(el('inv-min')?.value)||5, unit: el('inv-unit')?.value||'pcs'
+  };
+  if (id) {
+    const p = S.products.find(x=>x.id===id);
+    if (p) Object.assign(p, { name:data.name, sku:data.sku, category:data.category,
+      sellingPrice:data.selling_price, costPrice:data.cost_price, stock:data.stock,
+      minStock:data.min_stock, unit:data.unit });
+    data.id = id;
+  } else {
+    const newP = { id:S.products.length+1, name:data.name, sku:data.sku,
+      category:data.category, sellingPrice:data.selling_price, costPrice:data.cost_price,
+      stock:data.stock, minStock:data.min_stock, unit:data.unit, brand:data.brand };
+    S.products.push(newP);
+  }
+  closeModal(); renderInv(); toast('Product saved ✓', 'ok');
+  await dbSave('saveProduct', [data], (id?'Edit':'Add')+' product: '+name);
+};
+
+// ── Purchase Order save ───────────────────────────────────────
+const _origSavePO2 = window.savePO;
+window.savePO = async function() {
+  const supId = el('po-sup')?.value;
+  const date  = el('po-date')?.value || new Date().toISOString().slice(0,10);
+  const rows  = document.querySelectorAll('.po-item-row');
+  if (!rows.length) { toast('Add at least one item', 'e'); return; }
+  const items = []; let total = 0;
+  rows.forEach(row => {
+    const pid  = row.querySelector('.po-pid')?.value;
+    const qty  = parseInt(row.querySelector('.po-qty')?.value) || 0;
+    const cost = parseFloat(row.querySelector('.po-cost')?.value) || 0;
+    if (pid && qty > 0) { items.push({ product_id: pid, qty, unit_cost: cost }); total += qty * cost; }
+  });
+  if (!items.length) { toast('Add valid items', 'e'); return; }
+  // Local save
+  const id = S.purchaseOrders.length + 1;
+  const sup = S.suppliers.find(s=>s.id==supId);
+  S.purchaseOrders.push({ id, poNum:'PO-'+String(id).padStart(3,'0'), supplierId:supId,
+    supplierName:sup?.name||'', date:new Date(date).toISOString(), items, total, status:'pending',
+    paid:false, notes:el('po-notes')?.value||'' });
+  closeModal(); renderPur(); toast('Purchase order created ✓', 'ok');
+  await dbSave('createPurchaseOrder',
+    [{ supplier_id: supId, total, notes: el('po-notes')?.value||'', created_by: S.user?.id||null }, items],
+    'Create PO');
+};
+
+// ── Staff save ────────────────────────────────────────────────
+const _origSaveStaff2 = window.saveStaff;
+window.saveStaff = async function(id) {
+  const name = el('sf-name')?.value?.trim();
+  if (!name) { toast('Name required', 'e'); return; }
+  const data = { name, phone: el('sf-phone')?.value||'', role: el('sf-role')?.value||'Staff',
+                 basic: parseFloat(el('sf-basic')?.value)||0, hra: parseFloat(el('sf-hra')?.value)||0,
+                 allowances: parseFloat(el('sf-allow')?.value)||0, join_date: el('sf-join')?.value||null };
+  if (id) {
+    const s = S.staff.find(x=>x.id===id);
+    if (s) Object.assign(s, { name:data.name, phone:data.phone, role:data.role,
+      basic:data.basic, hra:data.hra, allowances:data.allowances, joinDate:data.join_date });
+    data.id = id;
+  } else {
+    S.staff.push({ id:S.staff.length+1, ...data, joinDate:data.join_date });
+  }
+  closeModal(); renderPayroll(); toast('Staff saved ✓', 'ok');
+  await dbSave('saveStaff', [data], (id?'Edit':'Add')+' staff: '+name);
+};
+
+// ── Attendance mark ───────────────────────────────────────────
+const _origMarkAtt = window.markAtt;
+window.markAtt = async function(staffId, date, status, inTime, outTime) {
+  // Local already handled by original markAtt — call original first
+  if (_origMarkAtt) _origMarkAtt(staffId, date, status, inTime, outTime);
+  await dbSave('markAttendance', [staffId, date, status, inTime||null, outTime||null],
+    'Attendance: '+date);
+};
+
+// ── Expenses ──────────────────────────────────────────────────
+const _origSaveExpense = window.saveExpense;
+window.saveExpense = async function(id) {
+  const cat = el('exp-cat')?.value;
+  const amt = parseFloat(el('exp-amt')?.value) || 0;
+  const date = el('exp-date')?.value || new Date().toISOString().slice(0,10);
+  const notes = el('exp-notes')?.value || '';
+  if (!amt) { toast('Enter amount', 'e'); return; }
+  if (id) {
+    const e = S.exps?.find(x=>x.id===id);
+    if (e) Object.assign(e, { category:cat, amount:amt, date, notes });
+  } else {
+    S.exps = S.exps || [];
+    S.exps.push({ id:S.exps.length+1, category:cat, amount:amt, date, notes });
+  }
+  closeModal(); if(typeof rexp==='function') rexp(); toast('Expense saved ✓', 'ok');
+  await dbSave('saveExpense', [{ id:id||undefined, category:cat, amount:amt, date, notes }], 'Save expense');
+};
+
+// ── Delete Expense ────────────────────────────────────────────
+const _origDelExpense = window.delExp;
+window.delExp = async function(id) {
+  if (!confirm('Delete this expense?')) return;
+  S.exps = S.exps?.filter(e=>e.id!==id) || [];
+  if (typeof rexp==='function') rexp();
+  toast('Deleted ✓', 'ok');
+  await dbSave('deleteExpense', [id], 'Delete expense');
+};
+
+// ── Package save ──────────────────────────────────────────────
+const _origSavePkg2 = window.savePkg;
+window.savePkg = async function(id) {
+  const name = el('pkg-name')?.value?.trim();
+  if (!name) { toast('Package name required', 'e'); return; }
+  const svcs = [...document.querySelectorAll('.pkg-svc:checked')].map(cb=>cb.value);
+  const data = { name, description: el('pkg-desc')?.value||'',
+                 price: parseFloat(el('pkg-price')?.value)||0,
+                 discount: parseFloat(el('pkg-disc')?.value)||0,
+                 validity: parseInt(el('pkg-validity')?.value)||30,
+                 active: el('pkg-active')?.checked !== false,
+                 services: svcs, categories: [] };
+  if (id) {
+    const p = S.packages.find(x=>x.id===id);
+    if (p) Object.assign(p, { name:data.name, desc:data.description, price:data.price,
+      discount:data.discount, validity:data.validity, active:data.active, services:svcs });
+    data.id = id;
+  } else {
+    S.packages.push({ id:S.packages.length+1, name:data.name, desc:data.description,
+      price:data.price, discount:data.discount, validity:data.validity, active:data.active, services:svcs, categories:[] });
+  }
+  closeModal(); renderPkg(); toast('Package saved ✓', 'ok');
+  await dbSave('savePackage', [data], (id?'Edit':'Add')+' package: '+name);
+};
+
+// ── Offer save ────────────────────────────────────────────────
+const _origSaveOffer2 = window.saveOffer;
+window.saveOffer = async function(id) {
+  const name = el('of-name')?.value?.trim();
+  if (!name) { toast('Offer name required', 'e'); return; }
+  const data = { name, type: el('of-type')?.value||'percentage',
+                 value: parseFloat(el('of-val')?.value)||0,
+                 start_date: el('of-start')?.value||null, end_date: el('of-end')?.value||null,
+                 coupon: el('of-coupon')?.value?.trim()||null,
+                 usage_limit: parseInt(el('of-limit')?.value)||0,
+                 active: el('of-active')?.checked !== false, services:[], categories:[] };
+  if (id) {
+    const o = S.offers.find(x=>x.id===id);
+    if (o) Object.assign(o, { name:data.name, type:data.type, value:data.value,
+      startDate:data.start_date, endDate:data.end_date, coupon:data.coupon, active:data.active });
+    data.id = id;
+  } else {
+    S.offers.push({ id:S.offers.length+1, name:data.name, type:data.type, value:data.value,
+      startDate:data.start_date, endDate:data.end_date, coupon:data.coupon,
+      usageLimit:data.usage_limit, usedCount:0, active:data.active, services:[], categories:[] });
+  }
+  closeModal(); renderOffers(); toast('Offer saved ✓', 'ok');
+  await dbSave('saveOffer', [data], (id?'Edit':'Add')+' offer: '+name);
+};
+
+// ── Camera save ───────────────────────────────────────────────
+const _origSaveCam2 = window.saveCam;
+window.saveCam = async function(id) {
+  const name = el('cam-name')?.value?.trim();
+  if (!name) { toast('Camera name required', 'e'); return; }
+  const data = { name, location: el('cam-loc')?.value||'', ip: el('cam-ip')?.value||'',
+                 type: el('cam-type')?.value||'custom', apiKey: el('cam-key')?.value||'',
+                 enabled: el('cam-enabled')?.checked !== false };
+  if (id) {
+    const c = S.cameras.find(x=>x.id===id);
+    if (c) Object.assign(c, data);
+    data.id = id;
+  } else {
+    S.cameras.push({ id: S.cameras.length+1, ...data, status:'offline', lastPing:null });
+  }
+  closeModal(); renderAdm(); toast('Camera saved ✓', 'ok');
+  await dbSave('saveCamera', [data], (id?'Edit':'Add')+' camera: '+name);
+};
+
+// ── Service (wash service) save ───────────────────────────────
+const _origSaveSvc2 = window.saveSvc;
+window.saveSvc = async function(id) {
+  const name = el('svc-name')?.value?.trim();
+  if (!name) { toast('Service name required', 'e'); return; }
+  const data = { name, category: el('svc-cat')?.value||'basic',
+                 base_price: parseFloat(el('svc-price')?.value)||0,
+                 duration_min: parseInt(el('svc-dur')?.value)||30 };
+  if (id) {
+    const s = S.washSvcs.find(x=>x.id===id);
+    if (s) Object.assign(s, { name:data.name, cat:data.category,
+      basePrice:data.base_price, dur:data.duration_min });
+    data.id = id;
+  } else {
+    const newId = S.washSvcs.length + 1;
+    S.washSvcs.push({ id:newId, name:data.name, cat:data.category,
+      basePrice:data.base_price, dur:data.duration_min, prices:{} });
+  }
+  closeModal(); renderAdm(); toast('Service saved ✓', 'ok');
+  await dbSave('saveService', [data], (id?'Edit':'Add')+' service: '+name);
+};
+
+// ── Service pricing matrix save ───────────────────────────────
+const _origSavePricingMatrix2 = window.savePricingMatrix;
+window.savePricingMatrix = async function() {
+  // Call original first (updates local S.washSvcs prices)
+  if (_origSavePricingMatrix2) _origSavePricingMatrix2();
+  // Sync all prices to DB
+  for (const svc of S.washSvcs) {
+    for (const [catName, price] of Object.entries(svc.prices||{})) {
+      const catRow = ALL_CATS.find(c => c.cat === catName);
+      if (catRow?._dbId) {
+        await dbSave('saveServicePrice', [svc.id, catRow._dbId, price],
+          'Price: '+svc.name+'/'+catName);
+      }
+    }
+  }
+  toast('Pricing saved to database ✓', 'ok');
+};
+
+// ── App Config save ───────────────────────────────────────────
+const _origSaveAdmCfg2 = window.saveAdmCfg;
+window.saveAdmCfg = async function() {
+  // Call original local update
+  if (_origSaveAdmCfg2) _origSaveAdmCfg2();
+  // Sync key configs
+  const entries = {
+    biz_name: CFG.bizName, biz_phone: CFG.bizPhone, biz_addr: CFG.bizAddr,
+    gst_rate: CFG.gstRate, currency: CFG.currency,
+    points_per_rupee: CFG.pointsPerRupee, point_value: CFG.pointValue,
+    loyalty_enabled: CFG.loyaltyEnabled,
+    cctv_dedup_mins: CFG.cctvDedupMins, cctv_min_conf: CFG.cctvMinConf,
+    cctv_scan_interval: CFG.cctvScanInterval
+  };
+  for (const [k, v] of Object.entries(entries)) {
+    await dbSave('saveConfig', [k, v], 'Config: '+k);
+  }
+  toast('Settings saved to database ✓', 'ok');
+};
+
+// ── Receive PO ────────────────────────────────────────────────
+const _origReceivePO = window.receivePO;
+window.receivePO = async function(id) {
+  const po = S.purchaseOrders.find(x=>x.id===id);
+  if (!po) return;
+  // Local update
+  po.status = 'received';
+  po.items?.forEach(item => {
+    const p = S.products.find(x=>x.id==item.product_id||x.id==item.productId);
+    if (p) p.stock = (p.stock||0) + (item.qty||0);
+  });
+  renderPur(); toast('Stock updated ✓', 'ok');
+  // DB sync
+  const dbId = po._dbId || (typeof po.id==='string'&&po.id.length>10?po.id:null);
+  if (dbId) await dbSave('receivePurchaseOrder', [dbId], 'Receive PO');
+};
+
+// ── CCTV Settings save ────────────────────────────────────────
+const _origSaveCCTVSettings2 = window.saveCCTVSettings;
+window.saveCCTVSettings = async function() {
+  if (_origSaveCCTVSettings2) _origSaveCCTVSettings2();
+  await dbSave('saveConfig', ['cctv_dedup_mins', CFG.cctvDedupMins], 'CCTV config');
+  await dbSave('saveConfig', ['cctv_min_conf', CFG.cctvMinConf], 'CCTV config');
+  await dbSave('saveConfig', ['cctv_scan_interval', CFG.cctvScanInterval], 'CCTV config');
+  await dbSave('saveConfig', ['anpr_provider', CFG.anprProvider||'demo'], 'ANPR config');
+  toast('CCTV settings saved to database ✓', 'ok');
+};
+
+// ── Initial sync badge check ──────────────────────────────────
+updateSyncBadge();
+
+// ── Periodic sync attempt (every 30 seconds) ──────────────────
+setInterval(async () => {
+  if (navigator.onLine && sbGetToken()) {
+    const items = await oqGetAll().catch(()=>[]);
+    if (items.length > 0) await syncOfflineQueue();
+  }
+}, 30000);
+
+console.log('[QuickWash] Offline queue + full DB sync ready ✓');
+
 </script>
 </body>
 </html>
