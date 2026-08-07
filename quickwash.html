@@ -2240,11 +2240,17 @@ function slAdv(id,status){
   }
   toast(LOG_LABELS[status]+' ✓','ok');renderSL();
 
-  // ── Sync to Supabase ──────────────────────────────────────
+  // ── Sync status to Supabase directly ────────────────────────
   const dbId = l._dbId || (typeof l.id === 'string' && l.id.length > 10 ? l.id : null);
-  if(typeof QB!=='undefined' && sbGetToken() && dbId){
-    QB.advanceLogStatus(dbId, status)
-      .catch(err=>console.error('[QuickWash] Status sync failed:',err.message));
+  if (dbId && typeof sbQ === 'function') {
+    const tsMap = {received:'received_at',washing:'washing_at',interior:'interior_at',
+      detailing:'detailing_at',qc:'qc_at',ready:'ready_at',
+      delivered:'delivered_at',cancelled:'cancelled_at'};
+    const upd = { status, updated_at: new Date().toISOString() };
+    if (tsMap[status]) upd[tsMap[status]] = new Date().toISOString();
+    sbQ('service_logs').update(upd).eq('id', dbId)
+      .then(({error}) => { if(error) console.warn('[DB] Status:', error.message); })
+      .catch(e => console.warn('[DB] Status:', e?.message));
   }
 }
 
@@ -2440,14 +2446,25 @@ function saveSlPayment(id,total){
 
   // ── Sync payment to Supabase ────────────────────────────────
   const dbId = l._dbId || (typeof l.id==='string'&&l.id.length>10?l.id:null);
-  window._paySubmitting=false;
-  if(typeof QB!=='undefined'&&sbGetToken()&&dbId){
-    QB.recordPayment({
-      log_id: dbId, pay_method: methods.join('+'),
-      payment_details: payDetail,
-      pts_earned: CFG.loyaltyEnabled?Math.floor(total*CFG.pointsPerRupee):0
-    }).then(()=>console.log('[QuickWash] ✅ Payment synced to DB'))
-      .catch(err=>console.error('[QuickWash] ❌ Payment sync failed:',err.message));
+  window._paySubmitting = false;
+  // Direct DB sync
+  if (dbId && typeof sbQ === 'function') {
+    // Insert payment records
+    const pmts = payDetail.filter(p => p.amount > 0).map(p => ({
+      log_id: dbId, method: p.method, amount: p.amount
+    }));
+    if (pmts.length) {
+      sbQ('service_log_payments').insert(pmts)
+        .then(({error}) => { if(error) console.warn('[DB] Payment insert:', error.message); })
+        .catch(()=>{});
+    }
+    // Update log paid status
+    sbQ('service_logs').update({
+      paid: true, pay_method: methods.join('+'),
+      updated_at: new Date().toISOString()
+    }).eq('id', dbId)
+      .then(({error}) => { if(error) console.warn('[DB] Payment log update:', error.message); })
+      .catch(()=>{});
   }
 }
 
@@ -5773,34 +5790,47 @@ window.addEventListener('offline', () => {
 // ── Quick-add customer (Vehicle Entry) ───────────────────────
 const _origSaveQA = window.saveQA;
 window.saveQA = async function() {
-  const n = el('qa-n')?.value?.trim();   // ← correct IDs: qa-n, qa-p
+  const n = el('qa-n')?.value?.trim();
   const p = el('qa-p')?.value?.trim();
   if (!n || !p) { toast('Name and phone required', 'e'); return; }
   const plate = S.W?.plate || '';
-  const c = { id: Date.now(), name: n, phone: p, email: '', plates: plate?[plate]:[],
-               visits: 0, totalSpent: 0, lastVisit: new Date().toISOString(),
-               points: 0, notes: '', loyaltyHistory: [] };
-  S.customers.push(c); S.W.custId = c.id; S.W.cust = c;
+  const localId = 'local_' + Date.now();
+  const c = { id: localId, name: n, phone: p, email: '', plates: plate?[plate]:[],
+               visits:0, totalSpent:0, lastVisit:new Date().toISOString(),
+               points:0, notes:'', loyaltyHistory:[] };
+  S.customers.push(c);
+  S.W.custId = localId; S.W.cust = c;
   el('qa-wrap').style.display = 'none';
-  if (el('plate-result')) el('plate-result').innerHTML = `<div style="background:var(--glt);border:1px solid var(--green);border-radius:var(--r2);padding:10px 14px;margin-top:10px"><div style="font-size:12px;font-weight:800;color:var(--green)">✓ Customer: ${n}</div><div style="font-size:11px;color:var(--ink3)">📞 ${p}</div></div>`;
+  if (el('plate-result')) el('plate-result').innerHTML =
+    `<div style="background:var(--glt);border:1px solid var(--green);border-radius:var(--r2);padding:10px 14px;margin-top:10px">
+      <div style="font-size:12px;font-weight:800;color:var(--green)">✓ Customer: ${n}</div>
+      <div style="font-size:11px;color:var(--ink3)">📞 ${p}</div>
+    </div>`;
   el('btn0').disabled = false;
   toast('Customer added ✓', 'ok');
-  // DB save — update local record with real UUID when saved
-  dbSave('saveCustomer', [{ name: n, phone: p, plate }], 'Add customer: ' + n)
-    .then(saved => {
-      if (saved?.id) {
-        c.id = saved.id;
-        S.W.custId = saved.id;
-        // Add plate to DB
-        if (plate) {
-          sbQ('customer_plates').upsert(
-            { customer_id: saved.id, plate: plate.toUpperCase() },
-            { onConflict: 'customer_id,plate', ignoreDuplicates: true }
-          ).catch(()=>{});
-        }
+  // Direct DB insert — get real UUID immediately
+  try {
+    const { data: saved, error } = await sbQ('customers')
+      .insert({ name: n, phone: p, email: '' })
+      .select().single();
+    if (error) throw error;
+    if (saved) {
+      c.id = saved.id;
+      S.W.custId = saved.id;
+      S.W.cust.id = saved.id;
+      const idx = S.customers.findIndex(x => x.id === localId);
+      if (idx !== -1) S.customers[idx].id = saved.id;
+      if (plate) {
+        try {
+          await sbQ('customer_plates').insert({ customer_id: saved.id, plate: plate.toUpperCase() });
+        } catch(pe) {}
       }
-    })
-    .catch(e => console.warn('[DB] Customer save failed:', e?.message));
+      console.log('[QuickWash] ✅ Customer saved to DB:', saved.id);
+    }
+  } catch(e) {
+    console.warn('[QuickWash] Customer DB save failed:', e?.message);
+    toast('Customer saved locally — will sync when connected', 'w');
+  }
 };
 
 // ── Service Log Edit ──────────────────────────────────────────
@@ -5840,9 +5870,27 @@ window.saveSlEdit = async function(id) {
       const svc = S.washSvcs.find(s => s.name === name || s.service_name === name);
       return { log_id: dbId, service_id: svc?.id||null, service_name: name, price: svc?gPrice(svc,cat):0, qty: 1 };
     });
-    await dbSave('editServiceLog', [dbId, { discount: disc, tax, notes: l.notes,
-      estimated_mins: l.estimatedMins, staff_name: l.staff, status: l.status, services: svcDetails },
-      S.user?.name || 'Staff'], 'Edit service log');
+    // Direct DB update
+    if (dbId && typeof sbQ === 'function') {
+      sbQ('service_logs').update({
+        discount: disc, tax, notes: l.notes,
+        estimated_mins: l.estimatedMins, staff_name: l.staff, status: l.status,
+        updated_at: new Date().toISOString()
+      }).eq('id', dbId)
+        .then(({error}) => { if(error) console.warn('[DB] Log edit:', error.message); })
+        .catch(()=>{});
+      // Update services
+      if (svcDetails && svcDetails.length) {
+        sbQ('service_log_services').delete().eq('log_id', dbId)
+          .then(() => sbQ('service_log_services').insert(svcDetails))
+          .catch(()=>{});
+      }
+      // Add edit history
+      sbQ('service_log_edits').insert({
+        log_id: dbId, edited_by: S.user?.name||'Staff',
+        action: 'edited', edited_at: new Date().toISOString()
+      }).catch(()=>{});
+    }
   }
 };
 
@@ -5896,7 +5944,30 @@ window.saveInv = async function(id) {
     toast('Product added ✓','ok');
   }
   closeModal(); renderInv();
-  await dbSave('saveProduct', [data], (id&&id!=='null'?'Edit':'Add')+' product: '+name);
+  // Direct DB save
+  if (typeof sbQ === 'function') {
+    const { id: pid, ...pdata } = data;
+    const isUUID = pid && typeof pid === 'string' && pid.length > 10;
+    const dbRow = { name: pdata.name, sku: pdata.sku||null, category: pdata.category||'accessories',
+      brand: pdata.brand||'', selling_price: pdata.selling_price||0, cost_price: pdata.cost_price||0,
+      stock: pdata.stock||0, min_stock: pdata.min_stock||5, max_stock: pdata.max_stock||100,
+      unit: pdata.unit||'pcs', supplier_id: pdata.supplier_id||null };
+    if (isUUID) {
+      sbQ('inventory_products').update({...dbRow, updated_at: new Date().toISOString()})
+        .eq('id', pid)
+        .then(({error}) => { if(error) console.warn('[DB] Product update:', error.message); })
+        .catch(e => console.warn('[DB] Product update:', e?.message));
+    } else {
+      sbQ('inventory_products').insert(dbRow).select().single()
+        .then(({data: saved, error}) => {
+          if (error) { console.warn('[DB] Product insert:', error.message); return; }
+          if (saved) {
+            const p = S.products.find(x => x.name === pdata.name && !x._dbSaved);
+            if (p) { p.id = saved.id; p._dbSaved = true; }
+          }
+        }).catch(e => console.warn('[DB] Product insert:', e?.message));
+    }
+  }
 };
 
 // ── Purchase Order save ───────────────────────────────────────
@@ -6016,7 +6087,30 @@ window.savePkg = async function(id) {
       price:data.price, discount:data.discount, validity:data.validity, active:data.active, services:svcs, categories:[] });
   }
   closeModal(); renderPkg(); toast('Package saved ✓', 'ok');
-  await dbSave('savePackage', [data], (id?'Edit':'Add')+' package: '+name);
+  // Direct DB save
+  if (typeof sbQ === 'function') {
+    const { id: pid, ...pdata } = data;
+    const isUUID = pid && typeof pid === 'string' && pid.length > 10;
+    const dbRow = { name: pdata.name, description: pdata.description||'',
+      price: pdata.price||0, discount: pdata.discount||0, validity: pdata.validity||30,
+      active: pdata.active !== false,
+      services: JSON.stringify(pdata.services||[]),
+      categories: JSON.stringify(pdata.categories||[]) };
+    if (isUUID) {
+      sbQ('packages').update(dbRow).eq('id', pid)
+        .then(({error}) => { if(error) console.warn('[DB] Pkg update:', error.message); })
+        .catch(e => console.warn('[DB] Pkg update:', e?.message));
+    } else {
+      sbQ('packages').insert(dbRow).select().single()
+        .then(({data: saved, error}) => {
+          if (error) { console.warn('[DB] Pkg insert:', error.message); return; }
+          if (saved) {
+            const p = S.packages.find(x => x.name === pdata.name && !x._dbSaved);
+            if (p) { p.id = saved.id; p._dbSaved = true; }
+          }
+        }).catch(e => console.warn('[DB] Pkg insert:', e?.message));
+    }
+  }
 };
 
 // ── Offer save ────────────────────────────────────────────────
@@ -6042,7 +6136,29 @@ window.saveOffer = async function(id) {
     toast('Offer created ✓','ok');
   }
   closeModal(); renderOffers();
-  await dbSave('saveOffer', [data], (id?'Edit':'Add')+' offer: '+name);
+  // Direct DB save
+  if (typeof sbQ === 'function') {
+    const { id: oid, ...odata } = data;
+    const isUUID = oid && typeof oid === 'string' && oid.length > 10;
+    const dbRow = { name: odata.name, type: odata.type||'percentage', value: odata.value||0,
+      start_date: odata.start_date||null, end_date: odata.end_date||null,
+      coupon: odata.coupon||null, usage_limit: odata.usage_limit||0,
+      active: odata.active !== false, services: '[]', categories: '[]' };
+    if (isUUID) {
+      sbQ('offers').update(dbRow).eq('id', oid)
+        .then(({error}) => { if(error) console.warn('[DB] Offer update:', error.message); })
+        .catch(e => console.warn('[DB] Offer update:', e?.message));
+    } else {
+      sbQ('offers').insert(dbRow).select().single()
+        .then(({data: saved, error}) => {
+          if (error) { console.warn('[DB] Offer insert:', error.message); return; }
+          if (saved) {
+            const o = S.offers.find(x => x.name === odata.name && !x._dbSaved);
+            if (o) { o.id = saved.id; o._dbSaved = true; }
+          }
+        }).catch(e => console.warn('[DB] Offer insert:', e?.message));
+    }
+  }
 };
 
 // ── Camera save ───────────────────────────────────────────────
