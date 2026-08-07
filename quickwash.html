@@ -890,18 +890,23 @@ async function sbFindCustomerByPlate(plate) {
 }
 
 async function sbSaveCustomer(cust) {
-  if (cust.id) {
-    const { data } = await sbQ('customers').update({
-      name: cust.name, phone: cust.phone, email: cust.email, notes: cust.notes,
+  const isUUID = cust.id && typeof cust.id === 'string' && cust.id.length > 10;
+  if (isUUID) {
+    const { data, error } = await sbQ('customers').update({
+      name: cust.name, phone: cust.phone, email: cust.email||'', notes: cust.notes||'',
       updated_at: new Date().toISOString()
     }).eq('id', cust.id).select().single();
+    if (error) throw error;
     return data;
   } else {
-    const { data } = await sbQ('customers').insert({
-      name: cust.name, phone: cust.phone, email: cust.email || '', notes: cust.notes || ''
+    // New customer — insert
+    const { data, error } = await sbQ('customers').insert({
+      name: cust.name, phone: cust.phone, email: cust.email||'', notes: cust.notes||''
     }).select().single();
+    if (error) throw error;
     if (data && cust.plate) {
-      await sbQ('customer_plates').insert({ customer_id: data.id, plate: cust.plate.toUpperCase() });
+      await sbQ('customer_plates').insert({ customer_id: data.id, plate: cust.plate.toUpperCase() })
+        .catch(()=>{});
     }
     return data;
   }
@@ -985,11 +990,16 @@ async function sbLoadInventory(search = '') {
 }
 
 async function sbSaveProduct(prod) {
-  if (prod.id) {
-    await sbQ('inventory_products').update({ ...prod, updated_at: new Date().toISOString() }).eq('id', prod.id);
+  const { id, ...data } = prod;
+  const isUUID = id && typeof id === 'string' && id.length > 10;
+  if (isUUID) {
+    const { error } = await sbQ('inventory_products')
+      .update({...data, updated_at:new Date().toISOString()}).eq('id', id);
+    if (error) throw error;
   } else {
-    const { data } = await sbQ('inventory_products').insert(prod).select().single();
-    return data;
+    const { data: saved, error } = await sbQ('inventory_products').insert(data).select().single();
+    if (error) throw error;
+    return saved;
   }
 }
 
@@ -1008,11 +1018,17 @@ async function sbLoadSuppliers() {
 }
 
 async function sbSaveSupplier(sup) {
-  if (sup.id) {
-    await sbQ('suppliers').update(sup).eq('id', sup.id);
+  // Remove local integer id — let DB generate UUID
+  const { id, ...data } = sup;
+  const isUUID = id && typeof id === 'string' && id.length > 10;
+  if (isUUID) {
+    const { error } = await sbQ('suppliers').update(data).eq('id', id);
+    if (error) throw error;
   } else {
-    const { data } = await sbQ('suppliers').insert(sup).select().single();
-    return data;
+    // New record — insert without local integer id
+    const { data: saved, error } = await sbQ('suppliers').insert(data).select().single();
+    if (error) throw error;
+    return saved;
   }
 }
 
@@ -1055,11 +1071,15 @@ async function sbLoadStaff() {
 }
 
 async function sbSaveStaff(staff) {
-  if (staff.id) {
-    await sbQ('staff').update(staff).eq('id', staff.id);
+  const { id, ...data } = staff;
+  const isUUID = id && typeof id === 'string' && id.length > 10;
+  if (isUUID) {
+    const { error } = await sbQ('staff').update(data).eq('id', id);
+    if (error) throw error;
   } else {
-    const { data } = await sbQ('staff').insert(staff).select().single();
-    return data;
+    const { data: saved, error } = await sbQ('staff').insert(data).select().single();
+    if (error) throw error;
+    return saved;
   }
 }
 
@@ -1119,11 +1139,15 @@ async function sbLoadPackages() {
 }
 
 async function sbSavePackage(pkg) {
-  if (pkg.id) {
-    await sbQ('packages').update(pkg).eq('id', pkg.id);
+  const { id, ...data } = pkg;
+  const isUUID = id && typeof id === 'string' && id.length > 10;
+  if (isUUID) {
+    const { error } = await sbQ('packages').update(data).eq('id', id);
+    if (error) throw error;
   } else {
-    const { data } = await sbQ('packages').insert(pkg).select().single();
-    return data;
+    const { data: saved, error } = await sbQ('packages').insert(data).select().single();
+    if (error) throw error;
+    return saved;
   }
 }
 
@@ -1134,11 +1158,15 @@ async function sbLoadOffers() {
 }
 
 async function sbSaveOffer(offer) {
-  if (offer.id) {
-    await sbQ('offers').update(offer).eq('id', offer.id);
+  const { id, ...data } = offer;
+  const isUUID = id && typeof id === 'string' && id.length > 10;
+  if (isUUID) {
+    const { error } = await sbQ('offers').update(data).eq('id', id);
+    if (error) throw error;
   } else {
-    const { data } = await sbQ('offers').insert(offer).select().single();
-    return data;
+    const { data: saved, error } = await sbQ('offers').insert(data).select().single();
+    if (error) throw error;
+    return saved;
   }
 }
 
@@ -1162,11 +1190,15 @@ async function sbLoadCameras() {
 }
 
 async function sbSaveCamera(cam) {
-  if (cam.id) {
-    await sbQ('cctv_cameras').update(cam).eq('id', cam.id);
+  const { id, ...data } = cam;
+  const isUUID = id && typeof id === 'string' && id.length > 10;
+  if (isUUID) {
+    const { error } = await sbQ('cctv_cameras').update(data).eq('id', id);
+    if (error) throw error;
   } else {
-    const { data } = await sbQ('cctv_cameras').insert(cam).select().single();
-    return data;
+    const { data: saved, error } = await sbQ('cctv_cameras').insert(data).select().single();
+    if (error) throw error;
+    return saved;
   }
 }
 
@@ -1744,13 +1776,28 @@ function usePlate(){if(window._cp&&el('wiz-plate')){el('wiz-plate').value=window
 
 // Step 2 - Vehicle Details
 function renderVD(){
-  // Use S._vtypes from DB if VEHICLE_TYPES is empty
-  const vtypes = VEHICLE_TYPES.length > 0 ? VEHICLE_TYPES :
-    (S._vtypes||[]).map(vt=>({id:vt.code,label:vt.label,icon:vt.icon||'🚗',
-      cats:(vt.vehicle_categories||[]).map(vc=>vc.name)}));
-  if(!vtypes.length){
-    el('vtype-grid').innerHTML='<div style="color:var(--ink3);font-size:12px;padding:10px">Loading vehicle types… Please wait.</div>';
-    setTimeout(renderVD,1000); return;
+  // Build vtypes from all available sources — never wait
+  let vtypes = [];
+  if(VEHICLE_TYPES.length > 0) {
+    vtypes = VEHICLE_TYPES;
+  } else if(S._vtypes && S._vtypes.length > 0) {
+    vtypes = S._vtypes.map(vt=>({
+      id:vt.code, label:vt.label, icon:vt.icon||'🚗',
+      cats:(vt.vehicle_categories||[]).map(vc=>vc.name)
+    }));
+  } else {
+    // Hardcoded fallback — always works even without DB
+    vtypes = [
+      {id:'2w',label:'2 Wheeler',icon:'🛵',cats:['Scooter','Motorcycle']},
+      {id:'3w',label:'3 Wheeler',icon:'🛺',cats:['Auto Rickshaw']},
+      {id:'4w',label:'4 Wheeler',icon:'🚗',cats:['Sedan','Hatchback','SUV','Coupe','Pickup','Luxury']},
+      {id:'truck',label:'Truck',icon:'🚛',cats:['Light Truck','Heavy Truck']},
+      {id:'bus',label:'Bus',icon:'🚌',cats:['Standard Bus','Minibus']},
+      {id:'van',label:'Van',icon:'🚐',cats:['Van','Minivan']},
+      {id:'other',label:'Other',icon:'🚙',cats:['Other']}
+    ];
+    // Populate VEHICLE_TYPES array for rest of app
+    if(VEHICLE_TYPES.length===0) vtypes.forEach(v=>VEHICLE_TYPES.push(v));
   }
   el('vtype-grid').innerHTML=vtypes.map(t=>`<div class="vt-btn ${S.W.vtype===t.id?'sel':''}" onclick="selVT('${t.id}')"><div class="vt-icon">${t.icon||'🚗'}</div><div class="vt-lbl">${t.label}</div></div>`).join('');
   if(S.W.vtype)renderVCat();chk2();
@@ -1760,9 +1807,18 @@ function selVT(id){
   renderVD();
 }
 function renderVCat(){
-  const vtypes = VEHICLE_TYPES.length > 0 ? VEHICLE_TYPES :
+  let vtypes = VEHICLE_TYPES.length > 0 ? VEHICLE_TYPES :
     (S._vtypes||[]).map(vt=>({id:vt.code,label:vt.label,icon:vt.icon||'🚗',
       cats:(vt.vehicle_categories||[]).map(vc=>vc.name)}));
+  if(!vtypes.length) vtypes=[
+    {id:'2w',label:'2 Wheeler',icon:'🛵',cats:['Scooter','Motorcycle']},
+    {id:'3w',label:'3 Wheeler',icon:'🛺',cats:['Auto Rickshaw']},
+    {id:'4w',label:'4 Wheeler',icon:'🚗',cats:['Sedan','Hatchback','SUV','Coupe','Pickup','Luxury']},
+    {id:'truck',label:'Truck',icon:'🚛',cats:['Light Truck','Heavy Truck']},
+    {id:'bus',label:'Bus',icon:'🚌',cats:['Standard Bus','Minibus']},
+    {id:'van',label:'Van',icon:'🚐',cats:['Van','Minivan']},
+    {id:'other',label:'Other',icon:'🚙',cats:['Other']}
+  ];
   const vt=vtypes.find(t=>t.id===S.W.vtype);if(!vt)return;
   el('vcat-sec').style.display='block';
   el('vcat-grid').innerHTML=vt.cats.map(c=>`<div class="vc-btn ${S.W.vcat===c?'sel':''}" onclick="selVC('${c}')">${c}<br><span style="font-size:9px;color:var(--ink3)">×${CAT_MUL[c]||1}</span></div>`).join('');
@@ -5437,6 +5493,8 @@ async function syncOfflineQueue() {
 
 async function executeQueuedOp(item) {
   const { fn, args } = item;
+  // If tables don't exist yet, fail gracefully
+  if (!sbGetToken()) throw new Error('Not authenticated');
   switch(fn) {
     case 'createServiceEntry': return await QB.createServiceEntry(args[0]);
     case 'advanceLogStatus':   return await QB.advanceLogStatus(args[0], args[1]);
