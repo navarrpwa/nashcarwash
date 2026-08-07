@@ -3868,42 +3868,50 @@ function renderCCTVSettings(c){
 // Core ANPR scan — called by auto-timer AND manual buttons
 function runScan(cam, silent=false){
   if(!cam || !cam.enabled) return;
-  // Plate pool: known customer plates + random plates
-  const known  = S.customers.flatMap(c => c.plates||[]);
-  const random = ['MH01XY9876','GJ05AB3210','UP32CD5566','RJ14EF7788','WB20GH9900'];
-  const pool   = [...known, ...random];
-  const plate  = pool[Math.floor(Math.random()*pool.length)];
-  const conf   = Math.round(72 + Math.random()*27); // 72–99%
+
+  // DEMO MODE — only use real customer plates, never random invented ones
+  const provider = CFG.anprProvider || 'demo';
+  if(provider !== 'demo') return; // Real provider handled by window.runScan override
+
+  const knownPlates = S.customers.flatMap(c => c.plates||[]).filter(Boolean);
+  if(!knownPlates.length){
+    // No customer plates yet — skip silently in demo mode
+    return;
+  }
+
+  const plate = knownPlates[Math.floor(Math.random()*knownPlates.length)];
+  const conf  = Math.round(85 + Math.random()*14); // 85–99% in demo
+
   // Drop below confidence threshold
   if(conf < (CFG.cctvMinConf||75)){
-    if(!silent) toast('📷 '+cam.name+': low confidence ('+conf+'%), skipped','w');
     updateCamPulse(cam.id,'amber');
     return;
   }
+
   // Dedup check
   const dedupMs = (CFG.cctvDedupMins||5)*60*1000;
   const dup = S.detections.find(d=>d.plate===plate && d.camId===cam.id && (Date.now()-new Date(d.at))<dedupMs);
-  if(dup){
-    if(!silent) toast('⚠ Duplicate: '+plate+' within dedup window','w');
-    updateCamPulse(cam.id,'blue');
-    return;
-  }
+  if(dup){ updateCamPulse(cam.id,'blue'); return; }
+
   const activeJob = S.sl.find(l=>l.plate===plate && !['delivered','cancelled'].includes(l.status));
-  const det = {id:S.detections.length+1, plate, camId:cam.id, camName:cam.name, location:cam.location,
-               at:new Date().toISOString(), conf, status:'detected', logId:activeJob?.id||null, duplicate:false};
+  const det = {
+    id: S.detections.length+1, plate, camId:cam.id, camName:cam.name,
+    location:cam.location, at:new Date().toISOString(), conf,
+    status:'detected', logId:activeJob?.id||null, duplicate:false
+  };
   S.detections.unshift(det);
   cam.lastPing = new Date().toISOString();
   updateCamPulse(cam.id,'green');
-  _cctvOnDetection(); // reset idle timer / auto-resume if paused
-  // Update live feed only if CCTV page is open
+  _cctvOnDetection();
+
+  // Only update live feed if CCTV page is open
   if(el('live-det-feed')) updateLiveFeed(det);
+
   if(activeJob){
-    // Notify on any page
-    toast('📷 '+plate+' detected — ⚠ Active job #'+String(activeJob.id).padStart(6,'0'),'w');
+    if(!silent) toast('📷 '+plate+' detected — ⚠ Active job in progress','w');
   } else {
-    // Always toast so staff see detections from any page
-    toast('📷 ANPR: '+plate+' detected ('+conf+'%) — '+(el('live-det-feed')?'':'tap CCTV to action'),'ok');
-    if(!silent) showDetAlert(det);
+    if(!silent) toast('📷 ANPR: '+plate+' detected ('+conf+'%)','ok');
+    if(!silent && !el('live-det-feed')) showDetAlert(det);
   }
 }
 
@@ -4115,7 +4123,12 @@ function _cctvTick(){
   // Run regardless of which page is open — background scanning
   const cams = S.cameras.filter(c => c.enabled);
   if(!cams.length){ stopCCTVAutoScan(); return; }
-  runScan(cams[Math.floor(Math.random() * cams.length)], true);
+  // Don't fire toasts or auto-fill while staff is entering a vehicle
+  const onVehicleEntry = document.getElementById('pg-vehicle-entry')?.classList.contains('on');
+  const cam = cams[Math.floor(Math.random() * cams.length)];
+  runScan(cam, true); // always silent=true in background — avoids interrupting staff
+  // If on CCTV page, also do a non-silent scan for live feed
+  if(el('live-det-feed') && !onVehicleEntry) runScan(cam, false);
 }
 
 function _resetIdleCountdown(){
@@ -4769,57 +4782,38 @@ window.runScan = async function(cam, silent = false) {
 
   const provider = CFG.anprProvider || 'demo';
 
-  // ── REAL CAMERA MODE ────────────────────────────────────────
-  // Call actual ANPR API to get plate from live camera feed
-  if (provider !== 'demo') {
-    try {
-      const result = await sbCallANPR(cam, provider);
-      if (!result) { updateCamPulse(cam.id, 'amber'); return; } // No vehicle in frame
+  // ── DEMO MODE — delegate to original (which handles known plates only) ──
+  if (provider === 'demo') {
+    _origRunScan(cam, silent);
+    return;
+  }
 
-      const { plate, conf, brand, model, colour } = result;
+  // ── REAL CAMERA MODE — call actual ANPR API ─────────────────
+  try {
+    const result = await sbCallANPR(cam, provider);
+    if (!result) { updateCamPulse(cam.id, 'amber'); return; }
 
-      if (conf < (CFG.cctvMinConf || 75)) {
-        if (!silent) toast('📷 ' + cam.name + ': low confidence (' + conf + '%), skipped', 'w');
-        updateCamPulse(cam.id, 'amber');
-        return;
-      }
+    const { plate, conf, brand, model, colour } = result;
 
-      // Dedup check
-      const dedupMs = (CFG.cctvDedupMins || 5) * 60 * 1000;
-      const dup = S.detections.find(d =>
-        d.plate === plate && d.camId === cam.id && (Date.now() - new Date(d.at)) < dedupMs);
-      if (dup) { updateCamPulse(cam.id, 'blue'); return; }
-
-      await sbRecordDetection(cam, plate, conf, silent, brand, model, colour);
-
-    } catch(err) {
-      console.warn('[CCTV] API call failed for ' + cam.name + ':', err.message);
+    if (conf < (CFG.cctvMinConf || 75)) {
+      if (!silent) toast('📷 ' + cam.name + ': low confidence (' + conf + '%), skipped', 'w');
       updateCamPulse(cam.id, 'amber');
-      if (!silent) toast('📷 ' + cam.name + ': connection failed', 'e');
+      return;
     }
-    return;
+
+    // Dedup check
+    const dedupMs = (CFG.cctvDedupMins || 5) * 60 * 1000;
+    const dup = S.detections.find(d =>
+      d.plate === plate && d.camId === cam.id && (Date.now() - new Date(d.at)) < dedupMs);
+    if (dup) { updateCamPulse(cam.id, 'blue'); return; }
+
+    await sbRecordDetection(cam, plate, conf, silent, brand, model, colour);
+
+  } catch(err) {
+    console.warn('[CCTV] API call failed for ' + cam.name + ':', err.message);
+    updateCamPulse(cam.id, 'amber');
+    if (!silent) toast('📷 ' + cam.name + ': connection failed — check camera IP', 'e');
   }
-
-  // ── DEMO MODE ────────────────────────────────────────────────
-  // Only runs when Admin → CCTV Settings → Provider = Demo/Simulation
-  // Uses known customer plates only — NO random plates
-  const knownPlates = S.customers.flatMap(c => c.plates || []).filter(Boolean);
-  if (!knownPlates.length) {
-    if (!silent) toast('📷 Demo mode: no customer plates in database yet', 'w');
-    return;
-  }
-
-  const plate = knownPlates[Math.floor(Math.random() * knownPlates.length)];
-  const conf  = Math.round(82 + Math.random() * 17); // 82–99% in demo
-
-  if (conf < (CFG.cctvMinConf || 75)) { updateCamPulse(cam.id, 'amber'); return; }
-
-  const dedupMs = (CFG.cctvDedupMins || 5) * 60 * 1000;
-  const dup = S.detections.find(d =>
-    d.plate === plate && d.camId === cam.id && (Date.now() - new Date(d.at)) < dedupMs);
-  if (dup) { updateCamPulse(cam.id, 'blue'); return; }
-
-  await sbRecordDetection(cam, plate, conf, silent);
 };
 
 // ── Real ANPR API caller ─────────────────────────────────────
