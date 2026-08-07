@@ -1758,7 +1758,7 @@ const CH={};
 function mkch(id,cfg){if(typeof Chart==='undefined')return;if(CH[id])try{CH[id].destroy();}catch(e){console.warn("[QuickWash] Non-critical error:",e?.message);}const cv=el(id);if(!cv)return;try{CH[id]=new Chart(cv,cfg);}catch(e){console.warn("[QuickWash] Non-critical error:",e?.message);}}
 function tDiff(a,b){const ms=new Date(b||Date.now())-new Date(a);const m=Math.floor(ms/60000),s=Math.floor((ms%60000)/1000);return`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;}
 function tabs(items,cur,fn){return items.map(t=>`<button class="btn ${t===cur?'bp':'bs'} bsm" onclick="${fn}('${t}')">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('');}
-function getTotalSvcPrice(){const cat=S.W.vcat||'Sedan';return S.W.svcs.reduce((a,x)=>{const s=S.washSvcs.find(v=>v.id===x.id);return a+(s?gPrice(s,cat)*x.qty:0);},0);}
+function getTotalSvcPrice(){const cat=S.W.vcat||'Sedan';return S.W.svcs.reduce((a,x)=>{const s=S.washSvcs.find(v=>String(v.id)===String(x.id));return a+(s?gPrice(s,cat)*x.qty:0);},0);}
 
 // ══════════════════════════════════════════════════════════
 // AUTH
@@ -1961,15 +1961,15 @@ function renderSvcSel(){
   const cat=S.W.vcat||'Sedan';
   if(el('pfor'))el('pfor').textContent=cat;
   // Packages quick-select
-  const pkgs=S.packages.filter(p=>p.active&&(p.cats.length===0||p.cats.includes(cat)));
-  el('pkg-quick').innerHTML=pkgs.length?`<div style="font-size:11px;font-weight:700;color:var(--ink2);margin-bottom:7px">📦 Packages</div><div style="display:flex;gap:8px;flex-wrap:wrap">${pkgs.map(p=>`<button class="btn bsm" style="background:var(--plt);color:var(--purple);border:1.5px solid #DDD6FE" onclick="applyPkg(${p.id})">${p.name} — ${frs(p.price)}</button>`).join('')}</div>`:'';
+  const pkgs=S.packages.filter(p=>p.active&&((p.cats||p.categories||[]).length===0||(p.cats||p.categories||[]).includes(cat)));
+  el('pkg-quick').innerHTML=pkgs.length?`<div style="font-size:11px;font-weight:700;color:var(--ink2);margin-bottom:7px">📦 Packages</div><div style="display:flex;gap:8px;flex-wrap:wrap">${pkgs.map(p=>`<button class="btn bsm" style="background:var(--plt);color:var(--purple);border:1.5px solid #DDD6FE" onclick="applyPkg('${p.id}')">${p.name} — ${frs(p.price)}</button>`).join('')}</div>`:'';
   // Services grid
   el('svc-sel-grid').innerHTML=S.washSvcs.map(s=>{
-    const price=gPrice(s,cat);const sel=S.W.svcs.find(x=>x.id===s.id);
-    return`<div class="ss-card ${sel?'sel':''}" onclick="toggleSvc(${s.id})">
+    const price=gPrice(s,cat);const sel=S.W.svcs.find(x=>String(x.id)===String(s.id));
+    return`<div class="ss-card ${sel?'sel':''}" onclick="toggleSvc('${s.id}')">
       <div class="ss-name">${s.name}</div><div class="ss-price">${frs(price)}</div>
-      <div class="ss-cat">${s.cat} • ${s.dur}min</div>
-      ${sel?`<div style="display:flex;align-items:center;gap:6px;margin-top:8px" onclick="event.stopPropagation()"><button class="qb" onclick="svcQ(${s.id},-1)" style="width:24px;height:24px;border-radius:5px;border:1.5px solid var(--line2);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">−</button><span style="font-size:13px;font-weight:800">${sel.qty}</span><button class="qb" onclick="svcQ(${s.id},1)" style="width:24px;height:24px;border-radius:5px;border:1.5px solid var(--line2);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button></div>`:''}
+      <div class="ss-cat">${s.cat||s.category||''} • ${s.dur||s.duration_min||30}min</div>
+      ${sel?`<div style="display:flex;align-items:center;gap:6px;margin-top:8px" onclick="event.stopPropagation()"><button class="qb" onclick="svcQ('${s.id}',-1)" style="width:24px;height:24px;border-radius:5px;border:1.5px solid var(--line2);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">−</button><span style="font-size:13px;font-weight:800">${sel.qty}</span><button class="qb" onclick="svcQ('${s.id}',1)" style="width:24px;height:24px;border-radius:5px;border:1.5px solid var(--line2);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button></div>`:''}
     </div>`;
   }).join('');
   // Offers strip
@@ -1986,11 +1986,11 @@ function renderSvcSel(){
   el('loyalty-strip').innerHTML=lc&&CFG.loyaltyEnabled?`<div style="background:var(--plt);border:1.5px solid #DDD6FE;border-radius:var(--r);padding:10px 12px"><div style="font-size:10px;font-weight:800;color:var(--purple);margin-bottom:4px">💜 Loyalty Points</div><div style="font-size:12px;color:var(--ink2)">${lc.name} has <strong style="color:var(--purple)">${lc.points} pts</strong> (${frs(lc.points*CFG.pointValue)} value)</div></div>`:'';
   updateSvcStrip();
 }
-function toggleSvc(id){const idx=S.W.svcs.findIndex(x=>x.id===id);if(idx>=0)S.W.svcs.splice(idx,1);else S.W.svcs.push({id,qty:1});renderSvcSel();}
-function svcQ(id,d){const s=S.W.svcs.find(x=>x.id===id);if(!s)return;s.qty+=d;if(s.qty<=0)S.W.svcs=S.W.svcs.filter(x=>x.id!==id);renderSvcSel();}
+function toggleSvc(id){const idx=S.W.svcs.findIndex(x=>String(x.id)===String(id));if(idx>=0)S.W.svcs.splice(idx,1);else S.W.svcs.push({id,qty:1});renderSvcSel();}
+function svcQ(id,d){const s=S.W.svcs.find(x=>String(x.id)===String(id));if(!s)return;s.qty+=d;if(s.qty<=0)S.W.svcs=S.W.svcs.filter(x=>String(x.id)!==String(id));renderSvcSel();}
 function applyPkg(pkgId){
   const pkg=S.packages.find(p=>p.id===pkgId);if(!pkg)return;
-  S.W.svcs=[];pkg.svcs.forEach(name=>{const s=S.washSvcs.find(x=>x.name===name);if(s)S.W.svcs.push({id:s.id,qty:1});});
+  S.W.svcs=[];(pkg.svcs||pkg.services||[]).forEach(name=>{const s=S.washSvcs.find(x=>x.name===name||x.service_name===name);if(s)S.W.svcs.push({id:s.id,qty:1});});
   S.W.disc=pkg.discount;renderSvcSel();toast('Package applied: '+pkg.name,'ok');
 }
 function applyOffer(offId){
@@ -2007,7 +2007,7 @@ function updateSvcStrip(){
 // Step 4 - Payment
 function renderPayStep(){
   const cat=S.W.vcat||'Sedan';
-  el('pay-sum').innerHTML=S.W.svcs.map(x=>{const s=S.washSvcs.find(v=>v.id===x.id);const p=s?gPrice(s,cat)*x.qty:0;return`<div class="row jb" style="font-size:12px;padding:2px 0"><span>${s?.name||''} ×${x.qty}</span><span style="font-weight:600">${frs(p)}</span></div>`;}).join('');
+  el('pay-sum').innerHTML=S.W.svcs.map(x=>{const s=S.washSvcs.find(v=>String(v.id)===String(x.id));const p=s?gPrice(s,cat)*x.qty:0;return`<div class="row jb" style="font-size:12px;padding:2px 0"><span>${s?.name||''} ×${x.qty}</span><span style="font-weight:600">${frs(p)}</span></div>`;}).join('');
   if(el('p-disc'))el('p-disc').value=S.W.disc||0;
   updatePMUI();calcPay();
   // Show loyalty redemption
@@ -2047,7 +2047,7 @@ function calcChg(){const r=parseFloat(el('cash-r')?.value)||0;if(el('cash-chg'))
 function completeEntry(){
   if(!S.W.svcs.length){toast('Select services','e');return;}
   // Validate all services have prices for this vehicle category
-  const missingPrices=S.W.svcs.filter(x=>{const s=S.washSvcs.find(v=>v.id===x.id);return s&&gPrice(s,S.W.vcat||'Sedan')===0;});
+  const missingPrices=S.W.svcs.filter(x=>{const s=S.washSvcs.find(v=>String(v.id)===String(x.id));return s&&gPrice(s,S.W.vcat||'Sedan')===0;});
   if(missingPrices.length>0){const names=missingPrices.map(x=>S.washSvcs.find(v=>v.id===x.id)?.name).join(', ');toast('⚠ No price set for "'+names+'" for '+S.W.vcat+'. Configure in Admin → Service Pricing','e');return;}
   const tot=S.W._tot||getTotalSvcPrice();const now=new Date().toISOString();
   const pts=CFG.loyaltyEnabled?Math.floor(tot*CFG.pointsPerRupee):0;
@@ -2067,7 +2067,7 @@ function completeEntry(){
         const vtRow = S._vtypes?.find(vt=>vt.code===S.W.vtype);
         const vcRow = vtRow?.vehicle_categories?.find(vc=>vc.name===S.W.vcat);
         const svcDetails = (S.W.svcs||[]).map(x=>{
-          const svc=S.washSvcs.find(s=>s.id===x.id);
+          const svc=S.washSvcs.find(s=>String(s.id)===String(x.id));
           const price=svc?(svc.prices?.[S.W.vcat]||svc.basePrice):0;
           return{service_id:svc?.id||null,service_name:svc?.name||x.id,price,qty:1};
         });
@@ -2667,7 +2667,7 @@ function openQAC(){openModal(`${mhd('+New Customer')}<div class="fg"><label>Name
 function saveQAC(){
   const n=el('qac-n')?.value.trim(),p=el('qac-p')?.value.trim();
   if(!n||!p){toast('Name and phone required','e');return;}
-  const c={id:Date.now(),name:n,phone:p,email:'',plates:[],visits:0,totalSpent:0,
+  const c={id:'local_'+Date.now(),name:n,phone:p,email:'',plates:[],visits:0,totalSpent:0,
             lastVisit:new Date().toISOString(),points:0,notes:'',loyaltyHistory:[]};
   S.customers.push(c);closeModal();
   if(typeof selPC==='function')selPC(c.id);
@@ -2970,7 +2970,7 @@ function renderPayroll(){
     </tbody></table></div>`;
   } else {
     // Salary history from expenses
-    const salExp=S.exps.filter(e=>e.cat==='salaries');
+    const salExp=S.exps.filter(e=>(e.cat||e.category)==='salaries');
     c.innerHTML=`<div class="g4 mb4">${kc('Total Payroll',frs(S.staff.reduce((a,s)=>a+s.basic+s.hra+s.allowances,0)),'Per month','dn')}${kc('Paid',frs(salExp.reduce((a,e)=>a+e.amt,0)),'Total disbursed','')}${kc('Staff',S.staff.length,'Active','')}${kc('Avg Salary',frs(S.staff.length?S.staff.reduce((a,s)=>a+s.basic,0)/S.staff.length:0),'Basic','')}</div>
     <div class="tw"><table><thead><tr><th>Month</th><th>Amount</th><th>Notes</th></tr></thead><tbody>${salExp.map(e=>`<tr><td>${fdt(e.date)}</td><td style="font-weight:700">${frs(e.amt)}</td><td>${e.notes}</td></tr>`).join('')||'<tr><td colspan="3" style="text-align:center;color:var(--ink3)">No salary records yet</td></tr>'}</tbody></table></div>`;
   }
@@ -3058,13 +3058,40 @@ function doPrintPayslip(){const b=el('payslip-body');if(!b)return;const w=window
 // EXPENSES & REPORTS
 // ══════════════════════════════════════════════════════════
 function rexp(){
+  // Load expenses from DB if empty
+  if((!S.exps||!S.exps.length)&&typeof QB!=='undefined'&&sbGetToken()){
+    QB.loadExpenses().then(exps=>{
+      S.exps=(exps||[]).map(e=>({id:e.id,category:e.category,amount:parseFloat(e.amount),date:e.date,notes:e.notes||''}));
+      _rexpInner();
+    }).catch(()=>_rexpInner());
+    return;
+  }
+  _rexpInner();
+}
+function _rexpInner(){
+  // Normalize expenses — DB uses category/amount, local uses cat/amt
+  S.exps=(S.exps||[]).map(e=>({
+    ...e,
+    cat:e.cat||e.category||'other',
+    amt:e.amt||e.amount||0,
+    date:e.date||new Date().toISOString()
+  }));
   const mo=el('emo')?.value,cat=el('ecat')?.value;
-  let list=S.exps;if(mo!==''&&mo!=null)list=list.filter(e=>new Date(e.date).getMonth()===parseInt(mo));if(cat)list=list.filter(e=>e.cat===cat);
-  const tot=list.reduce((a,e)=>a+e.amt,0),bc={};list.forEach(e=>bc[e.cat]=(bc[e.cat]||0)+e.amt);
+  let list=S.exps;
+  if(mo!==''&&mo!=null)list=list.filter(e=>new Date(e.date).getMonth()===parseInt(mo));
+  if(cat)list=list.filter(e=>e.cat===cat||e.category===cat);
+  const tot=list.reduce((a,e)=>a+(e.amt||e.amount||0),0);
+  const bc={};list.forEach(e=>bc[e.cat||e.category]=(bc[e.cat||e.category]||0)+(e.amt||e.amount||0));
   el('ekpis').innerHTML=kc('Total',frs(tot),list.length+' entries','')+kc('Salaries',frs(bc['salaries']||0),'','')+kc('Supplies',frs(bc['supplies']||0),'','')+kc('Overhead',frs((bc['rent']||0)+(bc['utilities']||0)),'','');
   const ks=Object.keys(bc),cols=['#BFDBFE','#A7F3D0','#FDE68A','#FECACA','#DDD6FE','#FBCFE8'];
   mkch('c-exp',{type:'doughnut',data:{labels:ks.map(k=>k.charAt(0).toUpperCase()+k.slice(1)),datasets:[{data:ks.map(k=>bc[k]),backgroundColor:cols.slice(0,ks.length),borderColor:'#fff',borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right',labels:{boxWidth:9,padding:7,font:{size:10}}}}}});
-  el('ebody').innerHTML=list.slice().sort((a,b)=>new Date(b.date)-new Date(a.date)).map(e=>`<tr><td>${fdt(e.date)}</td><td><span class="bx bi">${e.cat}</span></td><td style="font-weight:700">${frs(e.amt)}</td><td style="color:var(--ink3);font-size:11px">${e.notes}</td><td><button class="btn br2 bsm" onclick="dexp(${e.id})">×</button></td></tr>`).join('');
+  el('ebody').innerHTML=list.slice().sort((a,b)=>new Date(b.date)-new Date(a.date)).map(e=>`<tr>
+    <td>${fdt(e.date)}</td>
+    <td><span class="bx bi">${e.cat||e.category}</span></td>
+    <td style="font-weight:700">${frs(e.amt||e.amount||0)}</td>
+    <td style="color:var(--ink3);font-size:11px">${e.notes||''}</td>
+    <td><button class="btn br2 bsm" onclick="dexp('${e.id}')">×</button></td>
+  </tr>`).join('');
 }
 function openExpM(exp=null){
   const cats=['supplies','salaries','rent','utilities','maintenance','marketing','stock','other'];
@@ -3075,15 +3102,44 @@ function openExpM(exp=null){
     <div class="fg"><label>Notes</label><input type="text" id="ec-n" value="${exp?.notes||''}"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="sexp(${exp?.id||'null'})">${exp?'Update':'Add'}</button></div>`);
 }
-function sexp(id){const c=el('ec-c')?.value,a=parseFloat(el('ec-a')?.value),d=el('ec-d')?.value,n=el('ec-n')?.value;if(!c||!a){toast('Fill fields','e');return;}if(id&&id!=='null'){const e=S.exps.find(x=>x.id===id);if(e){e.cat=c;e.amt=a;e.date=new Date(d).toISOString();e.notes=n;}toast('Updated','ok');}else{S.exps.push({id:S.exps.length+1,cat:c,amt:a,date:new Date(d).toISOString(),notes:n});toast('Added','ok');}closeModal();rexp();}
-function dexp(id){S.exps=S.exps.filter(e=>e.id!==id);toast('Deleted','ok');rexp();}
+function sexp(id){
+  const c=el('ec-c')?.value, a=parseFloat(el('ec-a')?.value),
+        d=el('ec-d')?.value, n=el('ec-n')?.value;
+  if(!c||!a){toast('Fill required fields','e');return;}
+  const dateStr=d?new Date(d).toISOString().slice(0,10):new Date().toISOString().slice(0,10);
+  const isUUID=id&&id!=='null'&&typeof id==='string'&&id.length>10;
+  if(isUUID){
+    const e=S.exps.find(x=>String(x.id)===String(id));
+    if(e){e.cat=c;e.category=c;e.amt=a;e.amount=a;e.date=dateStr;e.notes=n;}
+    toast('Updated ✓','ok');
+    if(typeof dbSave==='function') dbSave('saveExpense',[{id,category:c,amount:a,date:dateStr,notes:n}],'Edit expense').catch(()=>{});
+  } else {
+    const newExp={id:Date.now(),cat:c,category:c,amt:a,amount:a,date:dateStr,notes:n||''};
+    S.exps.push(newExp);
+    toast('Added ✓','ok');
+    if(typeof dbSave==='function'){
+      dbSave('saveExpense',[{category:c,amount:a,date:dateStr,notes:n||''}],'Add expense')
+        .then(saved=>{if(saved?.id){newExp.id=saved.id;}}).catch(()=>{});
+    }
+  }
+  closeModal();rexp();
+}
+function dexp(id){
+  if(!confirm('Delete this expense?'))return;
+  S.exps=S.exps.filter(e=>String(e.id)!==String(id));
+  toast('Deleted ✓','ok');rexp();
+  const isUUID=typeof id==='string'&&id.length>10;
+  if(isUUID&&typeof dbSave==='function'){
+    dbSave('deleteExpense',[id],'Delete expense').catch(()=>{});
+  }
+}
 
 function renderRpt(){
   el('rpt-tabs').innerHTML=tabs(['revenue','inventory','profit','staff'],(S.rptTab||'revenue'),"setRptTab");
   const c=el('rpt-content');
   const ms=['Jan','Feb','Mar','Apr','May','Jun','Jul'];
   if(S.rptTab==='revenue'){
-    const md=ms.map((m,i)=>{const txns=S.txns.filter(t=>new Date(t.date).getMonth()===i);const rev=txns.reduce((a,t)=>a+t.tot,0);const exp=S.exps.filter(e=>new Date(e.date).getMonth()===i).reduce((a,e)=>a+e.amt,0);return{m,rev,exp,profit:rev-exp,cnt:txns.length};});
+    const md=ms.map((m,i)=>{const txns=S.txns.filter(t=>new Date(t.date).getMonth()===i);const rev=txns.reduce((a,t)=>a+t.tot,0);const exp=S.exps.filter(e=>new Date(e.date).getMonth()===i).reduce((a,e)=>a+(e.amt||e.amount||0),0);return{m,rev,exp,profit:rev-exp,cnt:txns.length};});
     const tR=md.reduce((a,x)=>a+x.rev,0),tE=md.reduce((a,x)=>a+x.exp,0),tP=tR-tE;
     c.innerHTML=`<div class="g4 mb4">${kc('Total Revenue',frs(tR),'YTD','up')}${kc('Total Expenses',frs(tE),'YTD','dn')}${kc('Net Profit',frs(tP),'YTD',tP>=0?'up':'dn')}${kc('Margin',(tR>0?Math.round(tP/tR*100):0)+'%','','')}</div>
     <div class="g2 mb4"><div class="card"><div class="sec">Monthly P&L</div><div class="cw"><canvas id="c-pl"></canvas></div></div><div class="card"><div class="sec">Daily (7 Days)</div><div class="cw"><canvas id="c-day"></canvas></div></div></div>
@@ -4754,19 +4810,27 @@ async function sbBootstrapApp() {
 
     // Map services
     S.washSvcs = services.map(svc => ({
-      id: svc.id, name: svc.name, cat: svc.category,
-      basePrice: parseFloat(svc.base_price), dur: svc.duration_min,
+      id: svc.id, name: svc.name,
+      cat: svc.category||svc.cat||'basic',
+      category: svc.category||svc.cat||'basic',
+      basePrice: parseFloat(svc.base_price||svc.basePrice||0),
+      base_price: parseFloat(svc.base_price||svc.basePrice||0),
+      dur: svc.duration_min||svc.dur||30,
+      duration_min: svc.duration_min||svc.dur||30,
       prices: Object.fromEntries(
-        (svc.wash_service_prices || []).map(p => [p.vehicle_categories?.name, parseFloat(p.price)])
+        (svc.wash_service_prices || [])
+          .filter(p=>p.vehicle_categories?.name)
+          .map(p => [p.vehicle_categories.name, parseFloat(p.price)||0])
       )
     }));
 
     // Map customers (flatten view data)
     S.customers = customers.data.map(c => ({
       id: c.id, name: c.name, phone: c.phone, email: c.email || '',
-      visits: c.visits, totalSpent: parseFloat(c.total_spent),
-      lastVisit: c.last_visit, points: c.points, notes: c.notes || '',
-      plates: Array.isArray(c.plates) ? c.plates : (c.plates ? Object.values(c.plates) : []),
+      visits: c.visits||0, totalSpent: parseFloat(c.total_spent||0),
+      lastVisit: c.last_visit, points: c.points||0, notes: c.notes || '',
+      plates: Array.isArray(c.plates) ? c.plates :
+              (c.plates ? (typeof c.plates==='object'?Object.values(c.plates):[]) : []),
       loyaltyHistory: []
     }));
 
@@ -5721,10 +5785,22 @@ window.saveQA = async function() {
   if (el('plate-result')) el('plate-result').innerHTML = `<div style="background:var(--glt);border:1px solid var(--green);border-radius:var(--r2);padding:10px 14px;margin-top:10px"><div style="font-size:12px;font-weight:800;color:var(--green)">✓ Customer: ${n}</div><div style="font-size:11px;color:var(--ink3)">📞 ${p}</div></div>`;
   el('btn0').disabled = false;
   toast('Customer added ✓', 'ok');
-  // DB save
+  // DB save — update local record with real UUID when saved
   dbSave('saveCustomer', [{ name: n, phone: p, plate }], 'Add customer: ' + n)
-    .then(saved => { if (saved?.id) { c.id = saved.id; S.W.custId = saved.id; } })
-    .catch(()=>{});
+    .then(saved => {
+      if (saved?.id) {
+        c.id = saved.id;
+        S.W.custId = saved.id;
+        // Add plate to DB
+        if (plate) {
+          sbQ('customer_plates').upsert(
+            { customer_id: saved.id, plate: plate.toUpperCase() },
+            { onConflict: 'customer_id,plate', ignoreDuplicates: true }
+          ).catch(()=>{});
+        }
+      }
+    })
+    .catch(e => console.warn('[DB] Customer save failed:', e?.message));
 };
 
 // ── Service Log Edit ──────────────────────────────────────────
@@ -5761,7 +5837,7 @@ window.saveSlEdit = async function(id) {
   const dbId = l._dbId || (typeof l.id==='string'&&l.id.length>10?l.id:null);
   if (dbId) {
     const svcDetails = checked.map(name => {
-      const svc = S.washSvcs.find(s => s.name === name);
+      const svc = S.washSvcs.find(s => s.name === name || s.service_name === name);
       return { log_id: dbId, service_id: svc?.id||null, service_name: name, price: svc?gPrice(svc,cat):0, qty: 1 };
     });
     await dbSave('editServiceLog', [dbId, { discount: disc, tax, notes: l.notes,
