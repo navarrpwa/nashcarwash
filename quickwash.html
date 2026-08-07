@@ -1576,7 +1576,13 @@ const frs=n=>'₹'+(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maxim
 const f2=n=>(+n||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
 const fdt=iso=>new Date(iso).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});
 const ftm=iso=>new Date(iso).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'});
-function gPrice(svc,cat){if(svc.prices&&svc.prices[cat]!=null&&svc.prices[cat]>0)return svc.prices[cat];return Math.round(svc.basePrice*(CAT_MUL[cat]||1));}
+function gPrice(svc,cat){
+  if(!svc)return 0;
+  const prices=svc.prices||{};
+  if(prices[cat]!=null&&prices[cat]>0)return prices[cat];
+  const base=svc.basePrice||svc.base_price||0;
+  return Math.round(base*(CAT_MUL[cat]||1));
+}
 function hasExplicitPrice(svc,cat){return !!(svc.prices&&svc.prices[cat]>0);}
 function validateSvcPrices(vcat){return S.washSvcs.filter(s=>S.W.svcs.some(x=>x.id===s.id)&&gPrice(s,vcat)===0);}
 const sbx=s=>({completed:'bok',done:'bok',delivered:'bok',ready:'bcy2',qc:'bi',waiting:'bw',washing:'bpu2',received:'bi',interior:'bpu2',detailing:'bpu2',pending:'bw',cancelled:'be',ordered:'bi',received_po:'bok'}[s]||'bgr');
@@ -1630,10 +1636,14 @@ function gp(id,e2){
 // DASHBOARD
 // ══════════════════════════════════════════════════════════
 function rdash(){
-  // Ensure we have fresh data state
+  // Ensure all arrays initialized — prevents .filter() crash
   if(!S.sl) S.sl=[];
+  if(!S.txns) S.txns=[];
   if(!S.customers) S.customers=[];
   if(!S.products) S.products=[];
+  if(!S.exps) S.exps=[];
+  if(!S.detections) S.detections=[];
+  if(!S.staff) S.staff=[];
   const now=new Date(),ts=now.toDateString();
   const td=S.txns.filter(t=>new Date(t.date).toDateString()===ts);
   const wk=new Date(now);wk.setDate(now.getDate()-7);
@@ -1670,7 +1680,14 @@ function rdash(){
 // ══════════════════════════════════════════════════════════
 // VEHICLE ENTRY WIZARD
 // ══════════════════════════════════════════════════════════
-function initVE(){if(S.wizStep===0)resetWiz();}
+function initVE(){
+  // Ensure washSvcs available — use local if DB not loaded yet
+  if(!S.washSvcs||!S.washSvcs.length){
+    S.washSvcs=WASH_SVCS.map(s=>({...s,prices:s.prices||{}}));
+    initSvcPrices();
+  }
+  if(S.wizStep===0)resetWiz();
+}
 function resetWiz(){
   S.wizStep=0;S.W={plate:'',custId:null,cust:null,vname:'',brand:'',vtype:'',vcat:'',svcs:[],disc:0,payMethods:['cash'],splits:{},useTax:false,appliedOffer:null,ptsRedeem:0};
   document.querySelectorAll('.wp').forEach(p=>p.classList.remove('on'));
@@ -1727,12 +1744,26 @@ function usePlate(){if(window._cp&&el('wiz-plate')){el('wiz-plate').value=window
 
 // Step 2 - Vehicle Details
 function renderVD(){
-  el('vtype-grid').innerHTML=VEHICLE_TYPES.map(t=>`<div class="vt-btn ${S.W.vtype===t.id?'sel':''}" onclick="selVT('${t.id}')"><div class="vt-icon">${t.icon}</div><div class="vt-lbl">${t.label}</div></div>`).join('');
+  // Use S._vtypes from DB if VEHICLE_TYPES is empty
+  const vtypes = VEHICLE_TYPES.length > 0 ? VEHICLE_TYPES :
+    (S._vtypes||[]).map(vt=>({id:vt.code,label:vt.label,icon:vt.icon||'🚗',
+      cats:(vt.vehicle_categories||[]).map(vc=>vc.name)}));
+  if(!vtypes.length){
+    el('vtype-grid').innerHTML='<div style="color:var(--ink3);font-size:12px;padding:10px">Loading vehicle types… Please wait.</div>';
+    setTimeout(renderVD,1000); return;
+  }
+  el('vtype-grid').innerHTML=vtypes.map(t=>`<div class="vt-btn ${S.W.vtype===t.id?'sel':''}" onclick="selVT('${t.id}')"><div class="vt-icon">${t.icon||'🚗'}</div><div class="vt-lbl">${t.label}</div></div>`).join('');
   if(S.W.vtype)renderVCat();chk2();
 }
-function selVT(id){S.W.vtype=id;S.W.vcat='';renderVD();}
+function selVT(id){
+  S.W.vtype=id;S.W.vcat='';
+  renderVD();
+}
 function renderVCat(){
-  const vt=VEHICLE_TYPES.find(t=>t.id===S.W.vtype);if(!vt)return;
+  const vtypes = VEHICLE_TYPES.length > 0 ? VEHICLE_TYPES :
+    (S._vtypes||[]).map(vt=>({id:vt.code,label:vt.label,icon:vt.icon||'🚗',
+      cats:(vt.vehicle_categories||[]).map(vc=>vc.name)}));
+  const vt=vtypes.find(t=>t.id===S.W.vtype);if(!vt)return;
   el('vcat-sec').style.display='block';
   el('vcat-grid').innerHTML=vt.cats.map(c=>`<div class="vc-btn ${S.W.vcat===c?'sel':''}" onclick="selVC('${c}')">${c}<br><span style="font-size:9px;color:var(--ink3)">×${CAT_MUL[c]||1}</span></div>`).join('');
 }
@@ -2412,29 +2443,38 @@ function slRct(id){openSlReceipt(id);}
 // ══════════════════════════════════════════════════════════
 function rpos(){
   const q=(el('pq')?.value||'').toLowerCase();
-  const list=S.products.filter(p=>p.name.toLowerCase().includes(q)||p.cat.toLowerCase().includes(q));
-  el('pgrid').innerHTML=list.map(p=>`<div class="ss-card ${S.posCart.find(x=>x.id===p.id)?'sel':''}" onclick="addProd(${p.id})">
-    <div class="ss-name">${p.name}</div><div class="ss-price">${frs(p.sellingPrice)}</div>
-    <div class="ss-cat">${p.cat} • Stock: <span style="color:${p.stock<=p.minStock?'var(--red)':'var(--green)'}">  ${p.stock}</span></div>
-  </div>`).join('');
+  // Normalize product fields (DB uses category, local uses cat)
+  S.products.forEach(p=>{ p.cat=p.cat||p.category||'product'; p.sellingPrice=p.sellingPrice||p.selling_price||0; });
+  const list=S.products.filter(p=>p.active!==false&&(p.name.toLowerCase().includes(q)||(p.cat||'').toLowerCase().includes(q)));
+  el('pgrid').innerHTML=list.map((p,i)=>{
+    // Use index for onclick to avoid UUID syntax errors
+    S._posIdx=S._posIdx||{}; S._posIdx[i]=p.id;
+    return`<div class="ss-card ${S.posCart.find(x=>x.id===p.id)?'sel':''}" onclick="addProd('${p.id}')">
+      <div class="ss-name">${p.name}</div><div class="ss-price">${frs(p.sellingPrice||p.selling_price||0)}</div>
+      <div class="ss-cat">${p.cat||p.category||''} • Stock: <span style="color:${(p.stock||0)<=(p.minStock||p.min_stock||5)?'var(--red)':'var(--green)'}">${p.stock||0}</span></div>
+    </div>`;
+  }).join('');
   renderPosCart();
 }
 function rprods(){rpos();}
 function addProd(id){
-  const p=S.products.find(x=>x.id===id);if(!p)return;
-  if(p.stock<=0){toast('Out of stock!','e');return;}
-  const e=S.posCart.find(x=>x.id===id);
-  if(e)e.qty++;else S.posCart.push({...p,qty:1});
+  // id can be number or UUID string — match either way
+  const p=S.products.find(x=>String(x.id)===String(id));
+  if(!p){toast('Product not found','e');return;}
+  if((p.stock||0)<=0){toast('Out of stock!','e');return;}
+  const e=S.posCart.find(x=>String(x.id)===String(id));
+  if(e)e.qty++;
+  else S.posCart.push({...p, sellingPrice:p.sellingPrice||p.selling_price||0, qty:1});
   renderPosCart();rpos();
 }
 function renderPosCart(){
   const e=el('pclist');if(!e)return;
   if(!S.posCart.length){e.innerHTML='<p style="color:var(--ink3);font-size:12px;text-align:center;padding:16px">Cart empty</p>';posct();return;}
-  e.innerHTML=S.posCart.map(i=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)"><div><div style="font-size:12px;font-weight:700">${i.name}</div><div style="font-size:10px;color:var(--ink3)">${frs(i.sellingPrice)} × ${i.qty}</div></div><div style="display:flex;align-items:center;gap:5px"><span style="font-size:12px;font-weight:800;color:var(--blue)">${frs(i.sellingPrice*i.qty)}</span><button style="background:var(--rlt);border:none;color:var(--red);padding:2px 5px;border-radius:4px;cursor:pointer;font-size:10px" onclick="rmProd(${i.id})">×</button></div></div>`).join('');
+  e.innerHTML=S.posCart.map(i=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)"><div><div style="font-size:12px;font-weight:700">${i.name}</div><div style="font-size:10px;color:var(--ink3)">${frs(i.sellingPrice||i.selling_price||0)} × ${i.qty}</div></div><div style="display:flex;align-items:center;gap:5px"><span style="font-size:12px;font-weight:800;color:var(--blue)">${frs((i.sellingPrice||i.selling_price||0)*i.qty)}</span><button style="background:var(--rlt);border:none;color:var(--red);padding:2px 5px;border-radius:4px;cursor:pointer;font-size:10px" onclick="rmProd(${i.id})">×</button></div></div>`).join('');
   posct();
 }
-function rmProd(id){S.posCart=S.posCart.filter(x=>x.id!==id);renderPosCart();rpos();}
-function posct(){const tot=S.posCart.reduce((a,i)=>a+(i.sellingPrice*i.qty),0)-(parseFloat(el('posdisc')?.value)||0);if(el('postot'))el('postot').textContent=frs(Math.max(0,tot));}
+function rmProd(id){S.posCart=S.posCart.filter(x=>String(x.id)!==String(id));renderPosCart();rpos();}
+function posct(){const tot=S.posCart.reduce((a,i)=>a+((i.sellingPrice||i.selling_price||0)*i.qty),0)-(parseFloat(el('posdisc')?.value)||0);if(el('postot'))el('postot').textContent=frs(Math.max(0,tot));}
 function searchPC(){const q=el('pos-cq')?.value.toLowerCase()||'';const r=el('pos-cr');if(!q){r.style.display='none';return;}const f=S.customers.filter(c=>c.name.toLowerCase().includes(q)||c.phone.includes(q));if(!f.length){r.style.display='none';return;}r.style.display='block';r.innerHTML=f.map(c=>`<div onclick="selPC(${c.id})" style="padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--line)">${c.name} <span style="color:var(--ink3)">${c.phone}</span></div>`).join('');}
 function selPC(id){const c=S.customers.find(x=>x.id===id);if(!c)return;S.posCust=c;el('pos-cq').value='';el('pos-cr').style.display='none';el('pos-cs').textContent=c.name+' — '+c.phone;el('pos-cs').style.display='block';if(CFG.loyaltyEnabled&&c.points>0){el('pos-loyalty').style.display='block';el('pos-loyalty').innerHTML=`💜 ${c.name} has <strong>${c.points} pts</strong> (${frs(c.points*CFG.pointValue)} value)`;}}
 function openQAC(){openModal(`${mhd('+New Customer')}<div class="fg"><label>Name *</label><input type="text" id="qac-n"></div><div class="fg"><label>Phone *</label><input type="tel" id="qac-p" maxlength="10"></div><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveQAC()">Add</button></div>`);}
@@ -2446,16 +2486,17 @@ function saveQAC(){
   S.customers.push(c);closeModal();
   if(typeof selPC==='function')selPC(c.id);
   toast('Customer added ✓','ok');
-  // Sync to DB
-  if(typeof QB!=='undefined'&&sbGetToken()){
+  // Sync to DB — queue immediately even if not logged in yet
+  if(typeof dbSave==='function'){
     dbSave('saveCustomer',[{name:n,phone:p}],'POS quick-add customer')
-      .then(saved=>{if(saved?.id)c.id=saved.id;}).catch(()=>{});
+      .then(saved=>{if(saved?.id){c.id=saved.id;if(typeof selPC==='function')selPC(saved.id);}})
+      .catch(e=>console.warn('[QuickWash] Customer save queued:',e?.message));
   }
 }
 function poscheckout(){
   if(window._posSubmitting){toast('Processing…','w');return;}window._posSubmitting=true;
   if(!S.posCart.length){window._posSubmitting=false;toast('Cart empty','e');return;}
-  const tot=Math.max(0,S.posCart.reduce((a,i)=>a+(i.sellingPrice*i.qty),0)-(parseFloat(el('posdisc')?.value)||0));
+  const tot=Math.max(0,S.posCart.reduce((a,i)=>a+((i.sellingPrice||i.selling_price||0)*i.qty),0)-(parseFloat(el('posdisc')?.value)||0));
   // Deduct stock
   S.posCart.forEach(item=>{const p=S.products.find(x=>x.id===item.id);if(p)p.stock=Math.max(0,p.stock-item.qty);});
   const pts=S.posCust&&CFG.loyaltyEnabled?Math.floor(tot*CFG.pointsPerRupee):0;
@@ -4601,6 +4642,8 @@ async function sbBootstrapApp() {
       at: d.detected_at, duplicate: false
     }));
 
+    // Ensure S.txns exists (dashboard uses it for local calcs)
+    if(!S.txns) S.txns=[];
     // Load active service logs
     await sbRefreshServiceLogs();
     await sbRefreshCompletedJobs();
@@ -4617,8 +4660,15 @@ async function sbBootstrapApp() {
 
 // ── SERVICE LOGS ─────────────────────────────────────────────
 async function sbRefreshServiceLogs() {
-  const { data } = await QB.loadServiceLogs({ limit: 100 });
-  S.sl = data.map(mapDbLog);
+  const { data } = await QB.loadServiceLogs({ limit: 200 });
+  S.sl = (data||[]).map(mapDbLog);
+  // Populate S.txns from service logs for dashboard local calculations
+  S.txns = S.sl.filter(l=>l.paid).map(l=>({
+    id: l.id, rcpt: l.invoiceNo||l.jobNumber, type:'wash',
+    plate: l.plate, svcs: l.svcs||[], tot: l.total||l.amount||0,
+    pay: l.pay||'cash', status:'completed',
+    date: l.deliveredAt||l.enteredAt, custId: l.custId
+  }));
 }
 
 async function sbRefreshCompletedJobs() {
