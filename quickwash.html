@@ -329,7 +329,7 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
 // PWA Manifest
 (function(){
   const mf=document.createElement('link');mf.rel='manifest';
-  const d='{\n  "name": "QuickWash Enterprise",\n  "short_name": "QuickWash",\n  "description": "Enterprise Car Wash Management System",\n  "start_url": "/nashcarwash/quickwash.html",\n  "display": "standalone",\n  "background_color": "#0d2680",\n  "theme_color": "#1040c8",\n  "orientation": "any",\n  "icons": [\n    {"src": "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 192 192\'><rect width=\'192\' height=\'192\' rx=\'40\' fill=\'%230d2680\'/><text y=\'140\' font-size=\'120\' text-anchor=\'middle\' x=\'96\'>🚗</text></svg>", "sizes": "192x192", "type": "image/svg+xml"},\n    {"src": "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 512 512\'><rect width=\'512\' height=\'512\' rx=\'100\' fill=\'%230d2680\'/><text y=\'380\' font-size=\'320\' text-anchor=\'middle\' x=\'256\'>🚗</text></svg>", "sizes": "512x512", "type": "image/svg+xml"}\n  ]\n}';
+  const d='{\n  "name": "QuickWash Enterprise",\n  "short_name": "QuickWash",\n  "description": "Enterprise Car Wash Management System",\n  "start_url": "./",\n  "display": "standalone",\n  "background_color": "#0d2680",\n  "theme_color": "#1040c8",\n  "orientation": "any",\n  "icons": [\n    {"src": "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 192 192\'><rect width=\'192\' height=\'192\' rx=\'40\' fill=\'%230d2680\'/><text y=\'140\' font-size=\'120\' text-anchor=\'middle\' x=\'96\'>🚗</text></svg>", "sizes": "192x192", "type": "image/svg+xml"},\n    {"src": "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 512 512\'><rect width=\'512\' height=\'512\' rx=\'100\' fill=\'%230d2680\'/><text y=\'380\' font-size=\'320\' text-anchor=\'middle\' x=\'256\'>🚗</text></svg>", "sizes": "512x512", "type": "image/svg+xml"}\n  ]\n}';
   mf.href=URL.createObjectURL(new Blob([d],{type:'application/json'}));
   document.head.appendChild(mf);
   // Theme color
@@ -1487,7 +1487,18 @@ const WASH_SVCS=[
   {id:12,name:'Headlight Polish',cat:'extra',basePrice:250,dur:20,prices:null},
 ];
 // Init prices from multipliers (will be populated after ALL_CATS defined)
-function initSvcPrices(){WASH_SVCS.forEach(s=>{if(!s.prices)s.prices=mkPrices(s.basePrice);});}
+function initSvcPrices(){
+  WASH_SVCS.forEach(s=>{
+    s.basePrice = parseFloat(s.basePrice)||0;
+    s.dur = parseInt(s.dur)||30;
+    if(!s.prices)s.prices=mkPrices(s.basePrice);
+  });
+  // Also fix S.washSvcs
+  if(S.washSvcs) S.washSvcs.forEach(s=>{
+    s.basePrice = parseFloat(s.basePrice)||0;
+    s.dur = parseInt(s.dur)||30;
+  });
+}
 const PRODUCTS=[
   {id:101,name:'Air Freshener',sku:'AF001',barcode:'1001',cat:'accessories',brand:'Ambi Pur',supplierId:1,costPrice:80,sellingPrice:150,stock:45,minStock:10,maxStock:100,unit:'pcs'},
   {id:102,name:'Wiper Blade Set',sku:'WB002',barcode:'1002',cat:'accessories',brand:'Bosch',supplierId:1,costPrice:220,sellingPrice:450,stock:12,minStock:5,maxStock:50,unit:'set'},
@@ -1899,22 +1910,6 @@ function showEntryReceipt(entry){
   window._lastEntry=entry;
 }
 function printRct(){const b=el('rcpt-body');if(!b)return;const w=window.open('','_blank','width=380,height=520');w.document.write(`<!DOCTYPE html><html><head><style>body{font-family:'Courier New',monospace;padding:14px;font-size:12px;line-height:1.7}.rrow{display:flex;justify-content:space-between}.rdv{border-top:1px dashed #ccc;margin:7px 0}.rlogo{text-align:center;font-size:14px;font-weight:900;letter-spacing:2px}.rsub{text-align:center;font-size:10px;color:#666;margin-bottom:10px}</style>
-<script>
-// PWA Manifest
-(function(){
-  const mf=document.createElement('link');mf.rel='manifest';
-  const d='{\n  "name": "QuickWash Enterprise",\n  "short_name": "QuickWash",\n  "description": "Enterprise Car Wash Management System",\n  "start_url": "/nashcarwash/quickwash.html",\n  "display": "standalone",\n  "background_color": "#0d2680",\n  "theme_color": "#1040c8",\n  "orientation": "any",\n  "icons": [\n    {"src": "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 192 192\'><rect width=\'192\' height=\'192\' rx=\'40\' fill=\'%230d2680\'/><text y=\'140\' font-size=\'120\' text-anchor=\'middle\' x=\'96\'>🚗</text></svg>", "sizes": "192x192", "type": "image/svg+xml"},\n    {"src": "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 512 512\'><rect width=\'512\' height=\'512\' rx=\'100\' fill=\'%230d2680\'/><text y=\'380\' font-size=\'320\' text-anchor=\'middle\' x=\'256\'>🚗</text></svg>", "sizes": "512x512", "type": "image/svg+xml"}\n  ]\n}';
-  mf.href=URL.createObjectURL(new Blob([d],{type:'application/json'}));
-  document.head.appendChild(mf);
-  // Theme color
-  const tc=document.createElement('meta');tc.name='theme-color';tc.content='#1040c8';
-  document.head.appendChild(tc);
-  // Apple touch icon
-  const ai=document.createElement('link');ai.rel='apple-touch-icon';
-  ai.href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect width='180' height='180' rx='38' fill='%230d2680'/><text y='130' font-size='110' text-anchor='middle' x='90'>🚗</text></svg>";
-  document.head.appendChild(ai);
-})();
-</script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230d2680'/><text y='24' font-size='20' text-anchor='middle' x='16'>🚗</text></svg>" type="image/svg+xml">
 </head><body>${b.innerHTML}</body></html>`);w.document.close();setTimeout(()=>w.print(),400);}
 async function shareRct(){const e=window._lastEntry;if(!e)return;const txt=[`🚗 ${CFG.bizName}`,`Plate: ${e.plate}`,`Services: ${e.svcs.join(', ')}`,`Total: ${frs(e.amount)}`,`Payment: ${e.pay.toUpperCase()}`,'Thank you!'].join('\n');if(navigator.share)try{await navigator.share({title:'Receipt',text:txt});return;}catch(ex){console.warn("[QuickWash] Non-critical error:",ex?.message);}try{await navigator.clipboard.writeText(txt);toast('Copied!','ok');}catch(ex){console.warn("[QuickWash] Non-critical error:",ex?.message);}}
@@ -2288,22 +2283,6 @@ function printSlRct(){
   const b=el('rcpt-body');if(!b)return;
   const w=window.open('','_blank','width=380,height=560');
   w.document.write(`<!DOCTYPE html><html><head><style>body{font-family:'Courier New',monospace;padding:14px;font-size:12px;line-height:1.7}.rrow{display:flex;justify-content:space-between}.rdv{border-top:1px dashed #ccc;margin:7px 0}.rlogo{text-align:center;font-size:14px;font-weight:900;letter-spacing:2px}.rsub{text-align:center;font-size:10px;color:#666;margin-bottom:10px}</style>
-<script>
-// PWA Manifest
-(function(){
-  const mf=document.createElement('link');mf.rel='manifest';
-  const d='{\n  "name": "QuickWash Enterprise",\n  "short_name": "QuickWash",\n  "description": "Enterprise Car Wash Management System",\n  "start_url": "/nashcarwash/quickwash.html",\n  "display": "standalone",\n  "background_color": "#0d2680",\n  "theme_color": "#1040c8",\n  "orientation": "any",\n  "icons": [\n    {"src": "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 192 192\'><rect width=\'192\' height=\'192\' rx=\'40\' fill=\'%230d2680\'/><text y=\'140\' font-size=\'120\' text-anchor=\'middle\' x=\'96\'>🚗</text></svg>", "sizes": "192x192", "type": "image/svg+xml"},\n    {"src": "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 512 512\'><rect width=\'512\' height=\'512\' rx=\'100\' fill=\'%230d2680\'/><text y=\'380\' font-size=\'320\' text-anchor=\'middle\' x=\'256\'>🚗</text></svg>", "sizes": "512x512", "type": "image/svg+xml"}\n  ]\n}';
-  mf.href=URL.createObjectURL(new Blob([d],{type:'application/json'}));
-  document.head.appendChild(mf);
-  // Theme color
-  const tc=document.createElement('meta');tc.name='theme-color';tc.content='#1040c8';
-  document.head.appendChild(tc);
-  // Apple touch icon
-  const ai=document.createElement('link');ai.rel='apple-touch-icon';
-  ai.href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect width='180' height='180' rx='38' fill='%230d2680'/><text y='130' font-size='110' text-anchor='middle' x='90'>🚗</text></svg>";
-  document.head.appendChild(ai);
-})();
-</script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230d2680'/><text y='24' font-size='20' text-anchor='middle' x='16'>🚗</text></svg>" type="image/svg+xml">
 </head><body>${b.innerHTML}</body></html>`);
   w.document.close();setTimeout(()=>w.print(),400);
@@ -2846,22 +2825,6 @@ function printPayslip(id){
     <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Close</button><button class="btn bp" onclick="doPrintPayslip()">🖨 Print</button></div>`);
 }
 function doPrintPayslip(){const b=el('payslip-body');if(!b)return;const w=window.open('','_blank','width=500,height=600');w.document.write(`<!DOCTYPE html><html><head><style>body{font-family:sans-serif;padding:20px}.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.payslip-row{display:flex;justify-content:space-between;padding:5px 0;font-size:13px}.payslip-total{display:flex;justify-content:space-between;padding:8px 0;font-size:15px;font-weight:800;border-top:2px solid #000;margin-top:8px}</style>
-<script>
-// PWA Manifest
-(function(){
-  const mf=document.createElement('link');mf.rel='manifest';
-  const d='{\n  "name": "QuickWash Enterprise",\n  "short_name": "QuickWash",\n  "description": "Enterprise Car Wash Management System",\n  "start_url": "/nashcarwash/quickwash.html",\n  "display": "standalone",\n  "background_color": "#0d2680",\n  "theme_color": "#1040c8",\n  "orientation": "any",\n  "icons": [\n    {"src": "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 192 192\'><rect width=\'192\' height=\'192\' rx=\'40\' fill=\'%230d2680\'/><text y=\'140\' font-size=\'120\' text-anchor=\'middle\' x=\'96\'>🚗</text></svg>", "sizes": "192x192", "type": "image/svg+xml"},\n    {"src": "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 512 512\'><rect width=\'512\' height=\'512\' rx=\'100\' fill=\'%230d2680\'/><text y=\'380\' font-size=\'320\' text-anchor=\'middle\' x=\'256\'>🚗</text></svg>", "sizes": "512x512", "type": "image/svg+xml"}\n  ]\n}';
-  mf.href=URL.createObjectURL(new Blob([d],{type:'application/json'}));
-  document.head.appendChild(mf);
-  // Theme color
-  const tc=document.createElement('meta');tc.name='theme-color';tc.content='#1040c8';
-  document.head.appendChild(tc);
-  // Apple touch icon
-  const ai=document.createElement('link');ai.rel='apple-touch-icon';
-  ai.href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect width='180' height='180' rx='38' fill='%230d2680'/><text y='130' font-size='110' text-anchor='middle' x='90'>🚗</text></svg>";
-  document.head.appendChild(ai);
-})();
-</script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230d2680'/><text y='24' font-size='20' text-anchor='middle' x='16'>🚗</text></svg>" type="image/svg+xml">
 </head><body>${b.innerHTML}</body></html>`);w.document.close();setTimeout(()=>w.print(),400);}
 // ══════════════════════════════════════════════════════════
@@ -3115,6 +3078,12 @@ function admGo(section){
   closeSb();renderAdm();
 }
 function renderAdm(){
+  // Ensure CFG values are proper types before rendering
+  CFG.cctvMinConf = parseInt(CFG.cctvMinConf) || 75;
+  CFG.cctvDedupMins = parseInt(CFG.cctvDedupMins) || 5;
+  CFG.cctvRetention = parseInt(CFG.cctvRetention) || 30;
+  CFG.cctvScanInterval = parseInt(CFG.cctvScanInterval) || 3;
+  CFG.gstRate = parseFloat(CFG.gstRate) || 18;
   const section=S.admTab||'business';
   // Hide the tab row — admin uses accordion nav instead
   el('adm-tabs').innerHTML='';
@@ -3775,22 +3744,6 @@ function exportCJPDF(){
   const rows=jobs.map(l=>{const c=S.customers.find(x=>x.id===l.custId);const cat=l.vcat||'Sedan';const tot=Math.max(0,l.svcs.reduce((a,n)=>{const s=S.washSvcs.find(x=>x.name===n);return a+(s?gPrice(s,cat):0);},0)-(l.disc||0)+(l.tax||0));return`<tr style="border-bottom:1px solid #eee"><td>${String(l.id).padStart(6,'0')}</td><td>${fdt(l.enteredAt)}</td><td>${l.plate}</td><td>${c?.name||'Walk-in'}</td><td>${l.svcs.join(', ')}</td><td>${l.status}</td><td style="text-align:right">${frs(tot)}</td><td>${l.paid?'Paid':'Unpaid'}</td></tr>`;}).join('');
   const w=window.open('','_blank','width=900,height=600');
   w.document.write(`<!DOCTYPE html><html><head><style>body{font-family:sans-serif;padding:20px;font-size:12px}h2{margin-bottom:16px}table{width:100%;border-collapse:collapse}th{background:#EFF6FF;padding:8px;text-align:left;font-size:11px}td{padding:7px 8px}@media print{button{display:none}}</style>
-<script>
-// PWA Manifest
-(function(){
-  const mf=document.createElement('link');mf.rel='manifest';
-  const d='{\n  "name": "QuickWash Enterprise",\n  "short_name": "QuickWash",\n  "description": "Enterprise Car Wash Management System",\n  "start_url": "/nashcarwash/quickwash.html",\n  "display": "standalone",\n  "background_color": "#0d2680",\n  "theme_color": "#1040c8",\n  "orientation": "any",\n  "icons": [\n    {"src": "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 192 192\'><rect width=\'192\' height=\'192\' rx=\'40\' fill=\'%230d2680\'/><text y=\'140\' font-size=\'120\' text-anchor=\'middle\' x=\'96\'>🚗</text></svg>", "sizes": "192x192", "type": "image/svg+xml"},\n    {"src": "data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 512 512\'><rect width=\'512\' height=\'512\' rx=\'100\' fill=\'%230d2680\'/><text y=\'380\' font-size=\'320\' text-anchor=\'middle\' x=\'256\'>🚗</text></svg>", "sizes": "512x512", "type": "image/svg+xml"}\n  ]\n}';
-  mf.href=URL.createObjectURL(new Blob([d],{type:'application/json'}));
-  document.head.appendChild(mf);
-  // Theme color
-  const tc=document.createElement('meta');tc.name='theme-color';tc.content='#1040c8';
-  document.head.appendChild(tc);
-  // Apple touch icon
-  const ai=document.createElement('link');ai.rel='apple-touch-icon';
-  ai.href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect width='180' height='180' rx='38' fill='%230d2680'/><text y='130' font-size='110' text-anchor='middle' x='90'>🚗</text></svg>";
-  document.head.appendChild(ai);
-})();
-</script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230d2680'/><text y='24' font-size='20' text-anchor='middle' x='16'>🚗</text></svg>" type="image/svg+xml">
 </head><body><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><h2>${CFG.bizName} — Wash History</h2><div style="font-size:11px;color:#666">Generated: ${now}<br>Total: ${jobs.length} records</div></div><button onclick="window.print()" style="margin-bottom:12px;padding:6px 14px;background:#2563EB;color:#fff;border:none;border-radius:6px;cursor:pointer">🖨 Print PDF</button><table><thead><tr><th>Job#</th><th>Date</th><th>Plate</th><th>Customer</th><th>Services</th><th>Status</th><th>Amount</th><th>Payment</th></tr></thead><tbody>${rows}</tbody></table></body></html>`);
   w.document.close();
