@@ -2965,8 +2965,8 @@ function quickReorder(id){const p=S.products.find(x=>x.id===id);if(!p)return;con
 // PURCHASES
 // ══════════════════════════════════════════════════════════
 function renderPur(){
-  // Load from DB if empty
-  if((!S.purchaseOrders||!S.purchaseOrders.length)&&typeof sbQ==='function'){
+  // Always load fresh from DB
+  if(typeof sbQ==='function'){
     sbQ('purchase_orders')
       .select('*, suppliers(name), purchase_items(*, inventory_products(name,unit))')
       .order('created_at',{ascending:false})
@@ -2977,10 +2977,11 @@ function renderPur(){
             poNum:po.po_number, supplierId:po.supplier_id,
             supplierName:po.suppliers?.name||'',
             date:po.created_at, total:parseFloat(po.total||0),
-            status:po.status, paid:po.paid, notes:po.notes||'',
+            status:po.status, paid:po.paid||false, notes:po.notes||'',
             items:(po.purchase_items||[]).map(i=>({
-              product_id:i.product_id, productName:i.inventory_products?.name||'',
-              qty:i.qty, cost:i.unit_cost, unit_cost:i.unit_cost
+              prodId:i.product_id, product_id:i.product_id,
+              productName:i.inventory_products?.name||'',
+              qty:i.qty, cost:parseFloat(i.unit_cost||0), unit_cost:parseFloat(i.unit_cost||0)
             }))
           }));
         }
@@ -3283,30 +3284,46 @@ async function sexp(id){
         d=el('ec-d')?.value, n=el('ec-n')?.value;
   if(!c||!a){toast('Fill required fields','e');return;}
   const dateStr=d?new Date(d).toISOString().slice(0,10):new Date().toISOString().slice(0,10);
-  const expIsUUID=id&&id!=='null'&&typeof id==='string'&&id.length>10;
-  if(isUUID){
-    const e=S.exps.find(x=>String(x.id)===String(id));
-    if(e){e.cat=c;e.category=c;e.amt=a;e.amount=a;e.date=dateStr;e.notes=n;}
-    toast('Updated ✓','ok');
-    
-  } else {
-    const newExp={id:Date.now(),cat:c,category:c,amt:a,amount:a,date:dateStr,notes:n||''};
-    S.exps.push(newExp);
-    toast('Added ✓','ok');
-    if(typeof dbSave==='function'){
-      dbSave('saveExpense',[{category:c,amount:a,date:dateStr,notes:n||''}],'Add expense')
-        .then(saved=>{if(saved?.id){newExp.id=saved.id;}}).catch(()=>{});
+  const expIsUUID = id && id!=='null' && typeof id==='string' && id.length>10 && id.includes('-');
+  const btn=document.querySelector('.modal .btn.bp'); if(btn) btn.disabled=true;
+  try {
+    if(expIsUUID){
+      // Edit existing
+      const {error}=await sbQ('expenses').update({
+        category:c, amount:a, date:dateStr, notes:n||''
+      }).eq('id',id);
+      if(error) throw error;
+      const e=S.exps?.find(x=>String(x.id)===String(id));
+      if(e) Object.assign(e,{cat:c,category:c,amt:a,amount:a,date:dateStr,notes:n||''});
+      toast('Expense updated ✓','ok');
+    } else {
+      // New expense — insert directly
+      const {data:saved,error}=await sbQ('expenses').insert({
+        category:c, amount:a, date:dateStr, notes:n||''
+      }).select().single();
+      if(error) throw error;
+      if(!S.exps) S.exps=[];
+      S.exps.push({id:saved.id,cat:saved.category,category:saved.category,
+        amt:parseFloat(saved.amount),amount:parseFloat(saved.amount),
+        date:saved.date,notes:saved.notes||''});
+      toast('Expense added ✓','ok');
+      console.log('[QuickWash] ✅ Expense saved to DB:',saved.id);
     }
-  }
-  closeModal();rexp();
+    closeModal();rexp();
+  } catch(e) {
+    toast('Failed to save expense: '+(e.message||'DB error'),'e');
+    console.error('[DB] Expense save failed:',e);
+  } finally { if(btn) btn.disabled=false; }
 }
-function dexp(id){
+async function dexp(id){
   if(!confirm('Delete this expense?'))return;
-  S.exps=S.exps.filter(e=>String(e.id)!==String(id));
-  toast('Deleted ✓','ok');rexp();
-  const isUUID=typeof id==='string'&&id.length>10;
-  if(isUUID&&typeof dbSave==='function'){
-    if(typeof sbQ==='function') sbQ('expenses').delete().eq('id',id).catch(()=>{});
+  try {
+    const {error}=await sbQ('expenses').delete().eq('id',id);
+    if(error) throw error;
+    S.exps=(S.exps||[]).filter(e=>String(e.id)!==String(id));
+    toast('Expense deleted ✓','ok');rexp();
+  } catch(e) {
+    toast('Delete failed: '+(e.message||'DB error'),'e');
   }
 }
 
@@ -6126,7 +6143,7 @@ window.savePO = async function() {
   const date  = el('po-date')?.value || new Date().toISOString().slice(0,10);
   const notes = el('po-notes')?.value || '';
 
-  // Collect line items
+  // Collect line items — handle both UUID and integer product IDs
   const items = []; let total = 0;
   for (let i = 0; i < (window._poItems||1); i++) {
     const pid  = el(`poi-p${i}`)?.value;
@@ -6141,36 +6158,66 @@ window.savePO = async function() {
 
   const btn = document.querySelector('.modal .btn.bp'); if(btn) btn.disabled = true;
   try {
-    // Generate PO number
     const poNum = 'PO-' + String(Date.now()).slice(-6);
 
-    // 1. Insert purchase order
-    const po = await dbInsert('purchase_orders', {
-      po_number:   poNum,
-      supplier_id: isUUID(supId) ? supId : null,
-      total,
-      notes,
-      status:      'pending'
-    });
-
-    // 2. Insert all line items
-    for (const item of items) {
-      const prodId = isUUID(item.product_id) ? item.product_id : null;
-      if (prodId) {
-        await dbInsert('purchase_items', {
-          order_id:  po.id,
-          product_id: prodId,
-          qty:        item.qty,
-          unit_cost:  item.unit_cost
-        });
+    // Find real supplier UUID if supId is a local integer
+    let realSupId = null;
+    if (supId) {
+      if (isUUID(supId)) {
+        realSupId = supId;
+      } else {
+        // Look up supplier's DB UUID from local state
+        const sup = S.suppliers.find(s => String(s.id) === String(supId));
+        realSupId = isUUID(sup?.id) ? sup.id : null;
       }
     }
 
-    // 3. Update local state
+    // 1. Insert purchase order
+    const { data: po, error: poErr } = await sbQ('purchase_orders').insert({
+      po_number: poNum,
+      supplier_id: realSupId,
+      total,
+      notes,
+      status: 'pending'
+    }).select().single();
+    if (poErr) throw poErr;
+
+    // 2. Insert line items — resolve product UUID for each
+    for (const item of items) {
+      let realProdId = null;
+      if (isUUID(item.product_id)) {
+        realProdId = item.product_id;
+      } else {
+        // Look up product's real UUID
+        const prod = S.products.find(p => String(p.id) === String(item.product_id));
+        realProdId = isUUID(prod?.id) ? prod.id : null;
+      }
+      if (realProdId) {
+        const { error: itemErr } = await sbQ('purchase_items').insert({
+          order_id:   po.id,
+          product_id: realProdId,
+          qty:        item.qty,
+          unit_cost:  item.unit_cost
+        });
+        if (itemErr) console.warn('[DB] PO item insert failed:', itemErr.message);
+      } else {
+        // Product not in DB yet — still record with null product_id
+        await sbQ('purchase_items').insert({
+          order_id:  po.id,
+          product_id: null,
+          qty:        item.qty,
+          unit_cost:  item.unit_cost
+        }).catch(()=>{});
+      }
+    }
+
+    // 3. Update local state with real DB data
     const sup = S.suppliers.find(s => String(s.id) === String(supId));
+    if (sup) sup.outstanding = (sup.outstanding||0) + total;
     const localItems = items.map(i => {
       const prod = S.products.find(p => String(p.id) === String(i.product_id));
-      return { ...i, prodId: i.product_id, productName: prod?.name||'', cost: i.unit_cost };
+      return { prodId: i.product_id, product_id: i.product_id,
+               productName: prod?.name||'', qty: i.qty, cost: i.unit_cost, unit_cost: i.unit_cost };
     });
     S.purchaseOrders.push({
       id: po.id, _dbId: po.id,
@@ -6181,7 +6228,7 @@ window.savePO = async function() {
 
     closeModal(); renderPur();
     toast('Purchase order ' + poNum + ' created ✓', 'ok');
-    console.log('[QuickWash] ✅ PO saved to DB:', po.id);
+    console.log('[QuickWash] ✅ PO saved to DB:', po.id, 'Items:', items.length);
 
   } catch(e) {
     toast('Failed to save purchase order: ' + (e.message||'DB error'), 'e');
