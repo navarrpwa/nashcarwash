@@ -1037,12 +1037,11 @@ async function sbCreateServiceEntry(payload) {
     }
     // Add plate to customer
     if (payload.plate && payload.customer_id) {
-      try {
-        await sbQ('customer_plates').insert({
-          customer_id: payload.customer_id,
-          plate: payload.plate.toUpperCase()
-        });
-      } catch(pe) { /* plate may already exist — ignore */ }
+      // Insert plate, ignore if duplicate
+      await sbQ('customer_plates').insert({
+        customer_id: payload.customer_id, plate: payload.plate.toUpperCase()
+      }).then(({error})=>{ if(error&&error.code!=='23505') console.warn('[DB] Plate:',error.message); })
+        .catch(()=>{});
     }
   }
 
