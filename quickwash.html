@@ -2729,19 +2729,26 @@ function posct(){const tot=S.posCart.reduce((a,i)=>a+((i.sellingPrice||i.selling
 function searchPC(){const q=el('pos-cq')?.value.toLowerCase()||'';const r=el('pos-cr');if(!q){r.style.display='none';return;}const f=S.customers.filter(c=>c.name.toLowerCase().includes(q)||c.phone.includes(q));if(!f.length){r.style.display='none';return;}r.style.display='block';r.innerHTML=f.map(c=>`<div onclick="selPC(${c.id})" style="padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--line)">${c.name} <span style="color:var(--ink3)">${c.phone}</span></div>`).join('');}
 function selPC(id){const c=S.customers.find(x=>x.id===id);if(!c)return;S.posCust=c;el('pos-cq').value='';el('pos-cr').style.display='none';el('pos-cs').textContent=c.name+' — '+c.phone;el('pos-cs').style.display='block';if(CFG.loyaltyEnabled&&c.points>0){el('pos-loyalty').style.display='block';el('pos-loyalty').innerHTML=`💜 ${c.name} has <strong>${c.points} pts</strong> (${frs(c.points*CFG.pointValue)} value)`;}}
 function openQAC(){openModal(`${mhd('+New Customer')}<div class="fg"><label>Name *</label><input type="text" id="qac-n"></div><div class="fg"><label>Phone *</label><input type="tel" id="qac-p" maxlength="10"></div><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveQAC()">Add</button></div>`);}
-function saveQAC(){
-  const n=el('qac-n')?.value.trim(),p=el('qac-p')?.value.trim();
+async function saveQAC(){
+  const n=el('qac-n')?.value.trim(), p=el('qac-p')?.value.trim();
   if(!n||!p){toast('Name and phone required','e');return;}
-  const c={id:'local_'+Date.now(),name:n,phone:p,email:'',plates:[],visits:0,totalSpent:0,
+  const localId='tmp_'+Date.now();
+  const c={id:localId,name:n,phone:p,email:'',plates:[],visits:0,totalSpent:0,
             lastVisit:new Date().toISOString(),points:0,notes:'',loyaltyHistory:[]};
-  S.customers.push(c);closeModal();
-  if(typeof selPC==='function')selPC(c.id);
+  S.customers.push(c);
+  closeModal();
+  if(typeof selPC==='function') selPC(localId);
   toast('Customer added ✓','ok');
-  // Sync to DB — queue immediately even if not logged in yet
-  if(typeof dbSave==='function'){
-    dbSave('saveCustomer',[{name:n,phone:p}],'POS quick-add customer')
-      .then(saved=>{if(saved?.id){c.id=saved.id;if(typeof selPC==='function')selPC(saved.id);}})
-      .catch(e=>console.warn('[QuickWash] Customer save queued:',e?.message));
+  try {
+    const saved=await dbInsert('customers',{name:n,phone:p,email:''});
+    c.id=saved.id;
+    const idx=S.customers.findIndex(x=>x.id===localId);
+    if(idx!==-1) S.customers[idx].id=saved.id;
+    if(typeof selPC==='function') selPC(saved.id);
+    console.log('[QuickWash] ✅ POS customer saved to DB:',saved.id);
+  } catch(e) {
+    console.warn('[QuickWash] POS customer DB save failed:',e?.message);
+    toast('Customer saved locally — check DB connection','w');
   }
 }
 function poscheckout(){
@@ -2779,6 +2786,26 @@ function poscheckout(){
 // CUSTOMERS
 // ══════════════════════════════════════════════════════════
 function renderCusts(){
+  // Load from DB on open
+  if(typeof sbQ==='function'){
+    sbQ('v_customers_full').select('*').order('name')
+      .then(({data,error})=>{
+        if(!error&&data){
+          S.customers=data.map(c=>({
+            id:c.id, name:c.name, phone:c.phone, email:c.email||'',
+            visits:c.visits||0, totalSpent:parseFloat(c.total_spent||0),
+            lastVisit:c.last_visit, points:c.points||0, notes:c.notes||'',
+            plates:Array.isArray(c.plates)?c.plates:(c.plates?JSON.parse(c.plates||'[]'):[]),
+            loyaltyHistory:[]
+          }));
+        }
+        _renderCustsInner();
+      }).catch(()=>_renderCustsInner());
+    return;
+  }
+  _renderCustsInner();
+}
+function _renderCustsInner(){
   const q=(el('cust-q')?.value||'').toLowerCase();
   let list=S.customers;if(q)list=list.filter(c=>c.name.toLowerCase().includes(q)||c.phone.includes(q)||c.plates.some(p=>p.toLowerCase().includes(q)));
   el('cust-kpis').innerHTML=kc('Total',S.customers.length,'Registered','up')+kc('Today',S.customers.filter(c=>new Date(c.lastVisit).toDateString()===new Date().toDateString()).length,'Visited','')+kc('Total Visits',S.customers.reduce((a,c)=>a+c.visits,0),'All time','')+kc('Total Points',S.customers.reduce((a,c)=>a+(c.points||0),0),'Loyalty points','up');
@@ -2792,6 +2819,7 @@ function renderCusts(){
     <div style="margin-top:7px;display:flex;gap:4px;flex-wrap:wrap">${c.plates.map(p=>`<span class="bx bi">${p}</span>`).join('')||'<span style="font-size:10px;color:var(--ink3)">No plates</span>'}</div>
   </div>`).join('')||'<p style="color:var(--ink3);text-align:center;padding:40px">No customers found</p>';
 }
+
 function openCM(id=null){
   const c=id?S.customers.find(x=>x.id===id):null;
   openModal(`${mhd((c?'Edit':'Add')+' Customer')}
@@ -2801,12 +2829,44 @@ function openCM(id=null){
     <div class="fg"><label>Notes</label><textarea id="cm-nt" rows="2" style="resize:none">${c?.notes||''}</textarea></div>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveCM(${id||'null'})">${c?'Update':'Add'}</button></div>`);
 }
-function saveCM(id){
-  const n=el('cm-n')?.value.trim(),p=el('cm-p')?.value.trim();if(!n||!p){toast('Required','e');return;}
-  const pls=el('cm-pl')?.value.split(',').map(x=>x.trim().toUpperCase()).filter(Boolean);
-  if(id&&id!=='null'){const c=S.customers.find(x=>x.id===id);if(c){c.name=n;c.phone=p;c.email=el('cm-e')?.value||'';c.plates=pls;c.notes=el('cm-nt')?.value||'';}toast('Updated','ok');}
-  else{S.customers.push({id:S.customers.length+1,name:n,phone:p,email:el('cm-e')?.value||'',plates:pls,visits:0,totalSpent:0,lastVisit:new Date().toISOString(),points:0,notes:el('cm-nt')?.value||'',loyaltyHistory:[]});toast('Added!','ok');}
-  closeModal();renderCusts();
+async function saveCM(id){
+  const n=el('cm-n')?.value.trim(), p=el('cm-p')?.value.trim();
+  if(!n||!p){toast('Name and phone required','e');return;}
+  const email=el('cm-e')?.value||'';
+  const notes=el('cm-nt')?.value||'';
+  const pls=(el('cm-pl')?.value||'').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean);
+  const btn=document.querySelector('.modal .btn.bp'); if(btn)btn.disabled=true;
+  try {
+    if(isUUID(id)){
+      // Edit existing
+      const {error}=await sbQ('customers').update({
+        name:n,phone:p,email,notes,updated_at:new Date().toISOString()
+      }).eq('id',id);
+      if(error) throw error;
+      const c=S.customers.find(x=>x.id===id);
+      if(c) Object.assign(c,{name:n,phone:p,email,notes,plates:pls});
+      // Sync plates: delete old, insert new
+      await sbQ('customer_plates').delete().eq('customer_id',id);
+      for(const pl of pls){
+        try{await dbInsert('customer_plates',{customer_id:id,plate:pl});}catch(e){}
+      }
+      closeModal();renderCusts();toast('Customer updated ✓','ok');
+    } else {
+      // New customer
+      const saved=await dbInsert('customers',{name:n,phone:p,email,notes});
+      // Insert plates
+      for(const pl of pls){
+        try{await dbInsert('customer_plates',{customer_id:saved.id,plate:pl});}catch(e){}
+      }
+      S.customers.push({id:saved.id,name:saved.name,phone:saved.phone,email:saved.email||'',
+        plates:pls,visits:0,totalSpent:0,lastVisit:new Date().toISOString(),
+        points:0,notes:notes,loyaltyHistory:[]});
+      closeModal();renderCusts();toast('Customer added ✓','ok');
+    }
+  } catch(e) {
+    toast('Failed to save customer: '+(e.message||'DB error'),'e');
+    if(btn)btn.disabled=false;
+  }
 }
 function openCustDetail(id){
   const c=S.customers.find(x=>x.id===id);if(!c)return;
@@ -2898,6 +2958,32 @@ function quickReorder(id){const p=S.products.find(x=>x.id===id);if(!p)return;con
 // PURCHASES
 // ══════════════════════════════════════════════════════════
 function renderPur(){
+  // Load from DB if empty
+  if((!S.purchaseOrders||!S.purchaseOrders.length)&&typeof sbQ==='function'){
+    sbQ('purchase_orders')
+      .select('*, suppliers(name), purchase_items(*, inventory_products(name,unit))')
+      .order('created_at',{ascending:false})
+      .then(({data,error})=>{
+        if(!error&&data){
+          S.purchaseOrders=data.map(po=>({
+            id:po.id, _dbId:po.id,
+            poNum:po.po_number, supplierId:po.supplier_id,
+            supplierName:po.suppliers?.name||'',
+            date:po.created_at, total:parseFloat(po.total||0),
+            status:po.status, paid:po.paid, notes:po.notes||'',
+            items:(po.purchase_items||[]).map(i=>({
+              product_id:i.product_id, productName:i.inventory_products?.name||'',
+              qty:i.qty, cost:i.unit_cost, unit_cost:i.unit_cost
+            }))
+          }));
+        }
+        _renderPurInner();
+      }).catch(()=>_renderPurInner());
+    return;
+  }
+  _renderPurInner();
+}
+function _renderPurInner(){
   el('pur-tabs').innerHTML=tabs(['orders','history'],(S.purTab||'orders'),"setPurTab");
   const totalOut=S.suppliers.reduce((a,s)=>a+s.outstanding,0);
   const pending=S.purchaseOrders.filter(o=>o.status==='pending').length;
@@ -2909,6 +2995,7 @@ function renderPur(){
     c.innerHTML=`<div class="tw"><table><thead><tr><th>PO #</th><th>Supplier</th><th>Total</th><th>Date</th><th>Status</th></tr></thead><tbody>${S.purchaseOrders.filter(o=>o.status==='received').map(o=>{const sup=S.suppliers.find(s=>s.id===o.supplierId);return`<tr><td style="font-weight:700">${o.poNum}</td><td>${sup?.name||'—'}</td><td>${frs(o.total)}</td><td>${fdt(o.date)}</td><td><span class="bx bok">Received</span></td></tr>`;}).join('')}</tbody></table></div>`;
   }
 }
+
 function setPurTab(t){S.purTab=t;renderPur();}
 function openPurOrder(prefillProd=null){
   const supOpts=S.suppliers.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
@@ -3133,12 +3220,19 @@ function doPrintPayslip(){const b=el('payslip-body');if(!b)return;const w=window
 // EXPENSES & REPORTS
 // ══════════════════════════════════════════════════════════
 function rexp(){
-  // Load expenses from DB if empty
-  if((!S.exps||!S.exps.length)&&typeof QB!=='undefined'&&sbGetToken()){
-    QB.loadExpenses().then(exps=>{
-      S.exps=(exps||[]).map(e=>({id:e.id,category:e.category,amount:parseFloat(e.amount),date:e.date,notes:e.notes||''}));
-      _rexpInner();
-    }).catch(()=>_rexpInner());
+  // Always load fresh from DB
+  if(typeof sbQ==='function'){
+    sbQ('expenses').select('*').order('date',{ascending:false})
+      .then(({data,error})=>{
+        if(!error&&data){
+          S.exps=data.map(e=>({
+            id:e.id, cat:e.category, category:e.category,
+            amt:parseFloat(e.amount||0), amount:parseFloat(e.amount||0),
+            date:e.date, notes:e.notes||''
+          }));
+        }
+        _rexpInner();
+      }).catch(()=>_rexpInner());
     return;
   }
   _rexpInner();
@@ -3177,12 +3271,12 @@ function openExpM(exp=null){
     <div class="fg"><label>Notes</label><input type="text" id="ec-n" value="${exp?.notes||''}"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="sexp(${exp?.id||'null'})">${exp?'Update':'Add'}</button></div>`);
 }
-function sexp(id){
+async function sexp(id){
   const c=el('ec-c')?.value, a=parseFloat(el('ec-a')?.value),
         d=el('ec-d')?.value, n=el('ec-n')?.value;
   if(!c||!a){toast('Fill required fields','e');return;}
   const dateStr=d?new Date(d).toISOString().slice(0,10):new Date().toISOString().slice(0,10);
-  const isUUID=id&&id!=='null'&&typeof id==='string'&&id.length>10;
+  const expIsUUID=id&&id!=='null'&&typeof id==='string'&&id.length>10;
   if(isUUID){
     const e=S.exps.find(x=>String(x.id)===String(id));
     if(e){e.cat=c;e.category=c;e.amt=a;e.amount=a;e.date=dateStr;e.notes=n;}
@@ -6010,28 +6104,72 @@ window.saveInv = async function(id) {
 // ── Purchase Order save ───────────────────────────────────────
 const _origSavePO2 = window.savePO;
 window.savePO = async function() {
-  const supId = el('po-sup')?.value;
+  const supId = el('po-sup')?.value || null;
   const date  = el('po-date')?.value || new Date().toISOString().slice(0,10);
-  // Collect items using poi-* IDs (matching openPurOrder modal)
+  const notes = el('po-notes')?.value || '';
+
+  // Collect line items
   const items = []; let total = 0;
   for (let i = 0; i < (window._poItems||1); i++) {
     const pid  = el(`poi-p${i}`)?.value;
-    const qty  = parseInt(el(`poi-q${i}`)?.value) || 0;
+    const qty  = parseInt(el(`poi-q${i}`)?.value)  || 0;
     const cost = parseFloat(el(`poi-c${i}`)?.value) || 0;
-    if (pid && qty > 0) { items.push({ product_id: pid, qty, unit_cost: cost }); total += qty * cost; }
+    if (pid && qty > 0) {
+      items.push({ product_id: pid, qty, unit_cost: cost });
+      total += qty * cost;
+    }
   }
   if (!items.length) { toast('Add at least one item', 'e'); return; }
-  if (!items.length) { toast('Add valid items', 'e'); return; }
-  // Local save
-  const id = S.purchaseOrders.length + 1;
-  const sup = S.suppliers.find(s=>s.id==supId);
-  S.purchaseOrders.push({ id, poNum:'PO-'+String(id).padStart(3,'0'), supplierId:supId,
-    supplierName:sup?.name||'', date:new Date(date).toISOString(), items, total, status:'pending',
-    paid:false, notes:el('po-notes')?.value||'' });
-  closeModal(); renderPur(); toast('Purchase order created ✓', 'ok');
-  await dbSave('createPurchaseOrder',
-    [{ supplier_id: supId, total, notes: el('po-notes')?.value||'', created_by: S.user?.id||null }, items],
-    'Create PO');
+
+  const btn = document.querySelector('.modal .btn.bp'); if(btn) btn.disabled = true;
+  try {
+    // Generate PO number
+    const poNum = 'PO-' + String(Date.now()).slice(-6);
+
+    // 1. Insert purchase order
+    const po = await dbInsert('purchase_orders', {
+      po_number:   poNum,
+      supplier_id: isUUID(supId) ? supId : null,
+      total,
+      notes,
+      status:      'pending'
+    });
+
+    // 2. Insert all line items
+    for (const item of items) {
+      const prodId = isUUID(item.product_id) ? item.product_id : null;
+      if (prodId) {
+        await dbInsert('purchase_items', {
+          order_id:  po.id,
+          product_id: prodId,
+          qty:        item.qty,
+          unit_cost:  item.unit_cost
+        });
+      }
+    }
+
+    // 3. Update local state
+    const sup = S.suppliers.find(s => String(s.id) === String(supId));
+    const localItems = items.map(i => {
+      const prod = S.products.find(p => String(p.id) === String(i.product_id));
+      return { ...i, prodId: i.product_id, productName: prod?.name||'', cost: i.unit_cost };
+    });
+    S.purchaseOrders.push({
+      id: po.id, _dbId: po.id,
+      poNum: po.po_number, supplierId: supId,
+      supplierName: sup?.name||'', date: po.created_at||new Date().toISOString(),
+      items: localItems, total, status: 'pending', paid: false, notes
+    });
+
+    closeModal(); renderPur();
+    toast('Purchase order ' + poNum + ' created ✓', 'ok');
+    console.log('[QuickWash] ✅ PO saved to DB:', po.id);
+
+  } catch(e) {
+    toast('Failed to save purchase order: ' + (e.message||'DB error'), 'e');
+    console.error('[DB] PO save failed:', e);
+    if(btn) btn.disabled = false;
+  }
 };
 
 // ── Staff save ───────────────────────────────────────────────
@@ -6307,18 +6445,49 @@ window.saveAdmCfg = async function() {
 // ── Receive PO ────────────────────────────────────────────────
 const _origReceivePO = window.receivePO;
 window.receivePO = async function(id) {
-  const po = S.purchaseOrders.find(x=>x.id===id);
-  if (!po) return;
-  // Local update
-  po.status = 'received';
-  po.items?.forEach(item => {
-    const p = S.products.find(x=>x.id==item.product_id||x.id==item.productId);
-    if (p) p.stock = (p.stock||0) + (item.qty||0);
-  });
-  renderPur(); toast('Stock updated ✓', 'ok');
-  // DB sync
-  const dbId = po._dbId || (typeof po.id==='string'&&po.id.length>10?po.id:null);
-  if (dbId) await dbSave('receivePurchaseOrder', [dbId], 'Receive PO');
+  const po = S.purchaseOrders.find(x => String(x.id) === String(id));
+  if (!po) { toast('Purchase order not found','e'); return; }
+  if (po.status === 'received') { toast('Already received','w'); return; }
+  if (!confirm('Confirm receipt of ' + (po.poNum||'this PO') + '?\nThis will update product stock levels.')) return;
+
+  const dbId = isUUID(po.id) ? po.id : (isUUID(po._dbId) ? po._dbId : null);
+  if (!dbId) { toast('PO not saved to database yet — please try again','e'); return; }
+
+  try {
+    // Get items from DB
+    const { data: dbItems, error: iErr } = await sbQ('purchase_items')
+      .select('product_id, qty, unit_cost').eq('order_id', dbId);
+    if (iErr) throw iErr;
+
+    // Update stock for each item
+    for (const item of (dbItems||[])) {
+      const { data: prod } = await sbQ('inventory_products')
+        .select('id,stock').eq('id', item.product_id).single();
+      if (prod) {
+        const newStock = (prod.stock||0) + item.qty;
+        await sbQ('inventory_products').update({
+          stock: newStock, updated_at: new Date().toISOString()
+        }).eq('id', item.product_id);
+        // Sync local state
+        const lp = S.products.find(x => String(x.id) === String(item.product_id));
+        if (lp) { lp.stock = newStock; }
+      }
+    }
+
+    // Mark PO received in DB
+    await sbQ('purchase_orders').update({
+      status: 'received', updated_at: new Date().toISOString()
+    }).eq('id', dbId);
+
+    // Update local PO
+    po.status = 'received';
+    renderPur(); renderInv();
+    toast('✅ Stock updated — PO received','ok');
+    console.log('[QuickWash] ✅ PO received, stock updated in DB');
+  } catch(e) {
+    toast('Failed to receive PO: '+(e.message||'DB error'),'e');
+    console.error('[DB] receivePO failed:',e);
+  }
 };
 
 // ── CCTV Settings save ────────────────────────────────────────
