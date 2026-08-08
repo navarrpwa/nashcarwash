@@ -2033,7 +2033,7 @@ function renderSvcSel(){
     if(o.cats.length>0&&!o.cats.includes(cat))return false;
     return true;
   });
-  el('offer-strip').innerHTML=activeOffers.length?`<div style="background:var(--pklt);border:1.5px solid #FBCFE8;border-radius:var(--r);padding:10px 12px"><div style="font-size:10px;font-weight:800;color:var(--pink);margin-bottom:6px">🎉 Applicable Offers</div>${activeOffers.map(o=>`<div class="row aic jb" style="margin-bottom:4px"><span style="font-size:12px;font-weight:600">${o.name}</span><button class="btn bpk bsm" onclick="applyOffer(${o.id})">Apply</button></div>`).join('')}</div>`:'';
+  el('offer-strip').innerHTML=activeOffers.length?`<div style="background:var(--pklt);border:1.5px solid #FBCFE8;border-radius:var(--r);padding:10px 12px"><div style="font-size:10px;font-weight:800;color:var(--pink);margin-bottom:6px">🎉 Applicable Offers</div>${activeOffers.map(o=>`<div class="row aic jb" style="margin-bottom:4px"><span style="font-size:12px;font-weight:600">${o.name}</span><button class="btn bpk bsm" onclick="applyOffer('${o.id}')">Apply</button></div>`).join('')}</div>`:'';
   // Loyalty strip
   const lc=S.W.cust;
   el('loyalty-strip').innerHTML=lc&&CFG.loyaltyEnabled?`<div style="background:var(--plt);border:1.5px solid #DDD6FE;border-radius:var(--r);padding:10px 12px"><div style="font-size:10px;font-weight:800;color:var(--purple);margin-bottom:4px">💜 Loyalty Points</div><div style="font-size:12px;color:var(--ink2)">${lc.name} has <strong style="color:var(--purple)">${lc.points} pts</strong> (${frs(lc.points*CFG.pointValue)} value)</div></div>`:'';
@@ -2264,14 +2264,14 @@ function buildLogActions(l,isEditable){
       // Must pay before deliver — show payment prompt instead
       b.push(`<button class="btn ba bsm" onclick="toast('⚠ Collect payment before delivering','e');openSlPayment(${l.id})">💳 Pay & Deliver</button>`);
     } else {
-      b.push(`<button class="btn bp bsm" onclick="slAdv(${l.id},'${nextStatus}')">${nlbl[nextStatus]}</button>`);
+      b.push(`<button class="btn bp bsm" onclick="slAdv('${l.id}','${nextStatus}')">${nlbl[nextStatus]}</button>`);
     }
   }
-  if(isEditable)b.push(`<button class="btn bpu bsm" onclick="openSlEdit(${l.id})">✏ Edit</button>`);
-  if(!l.paid)b.push(`<button class="btn bg2 bsm" onclick="openSlPayment(${l.id})">💳 Payment</button>`);
-  b.push(`<button class="btn bcy bsm" onclick="openSlReceipt(${l.id})">🖨 Receipt</button>`);
-  if(cust_for_log(l)?.phone)b.push(`<button class="btn bpk bsm" onclick="sendSMS(${l.id})">${l.smsStatus==='sent'?'↺ Resend SMS':'📱 SMS'}</button>`);
-  b.push(`<button class="btn bs bsm" onclick="slStaff(${l.id})">👤 Staff</button>`);
+  if(isEditable)b.push(`<button class="btn bpu bsm" onclick="openSlEdit('${l.id}')">✏ Edit</button>`);
+  if(!l.paid)b.push(`<button class="btn bg2 bsm" onclick="openSlPayment('${l.id}')">💳 Payment</button>`);
+  b.push(`<button class="btn bcy bsm" onclick="openSlReceipt('${l.id}')">🖨 Receipt</button>`);
+  if(cust_for_log(l)?.phone)b.push(`<button class="btn bpk bsm" onclick="sendSMS('${l.id}')">${l.smsStatus==='sent'?'↺ Resend SMS':'📱 SMS'}</button>`);
+  b.push(`<button class="btn bs bsm" onclick="slStaff('${l.id}')">👤 Staff</button>`);
   return b.join('');
 }
 function cust_for_log(l){return S.customers.find(c=>c.id===l.custId)||null;}
@@ -2728,12 +2728,12 @@ function addProd(id){
 function renderPosCart(){
   const e=el('pclist');if(!e)return;
   if(!S.posCart.length){e.innerHTML='<p style="color:var(--ink3);font-size:12px;text-align:center;padding:16px">Cart empty</p>';posct();return;}
-  e.innerHTML=S.posCart.map(i=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)"><div><div style="font-size:12px;font-weight:700">${i.name}</div><div style="font-size:10px;color:var(--ink3)">${frs(i.sellingPrice||i.selling_price||0)} × ${i.qty}</div></div><div style="display:flex;align-items:center;gap:5px"><span style="font-size:12px;font-weight:800;color:var(--blue)">${frs((i.sellingPrice||i.selling_price||0)*i.qty)}</span><button style="background:var(--rlt);border:none;color:var(--red);padding:2px 5px;border-radius:4px;cursor:pointer;font-size:10px" onclick="rmProd(${i.id})">×</button></div></div>`).join('');
+  e.innerHTML=S.posCart.map(i=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)"><div><div style="font-size:12px;font-weight:700">${i.name}</div><div style="font-size:10px;color:var(--ink3)">${frs(i.sellingPrice||i.selling_price||0)} × ${i.qty}</div></div><div style="display:flex;align-items:center;gap:5px"><span style="font-size:12px;font-weight:800;color:var(--blue)">${frs((i.sellingPrice||i.selling_price||0)*i.qty)}</span><button style="background:var(--rlt);border:none;color:var(--red);padding:2px 5px;border-radius:4px;cursor:pointer;font-size:10px" onclick="rmProd('${i.id}')">×</button></div></div>`).join('');
   posct();
 }
 function rmProd(id){S.posCart=S.posCart.filter(x=>String(x.id)!==String(id));renderPosCart();rpos();}
 function posct(){const tot=S.posCart.reduce((a,i)=>a+((i.sellingPrice||i.selling_price||0)*i.qty),0)-(parseFloat(el('posdisc')?.value)||0);if(el('postot'))el('postot').textContent=frs(Math.max(0,tot));}
-function searchPC(){const q=el('pos-cq')?.value.toLowerCase()||'';const r=el('pos-cr');if(!q){r.style.display='none';return;}const f=S.customers.filter(c=>c.name.toLowerCase().includes(q)||c.phone.includes(q));if(!f.length){r.style.display='none';return;}r.style.display='block';r.innerHTML=f.map(c=>`<div onclick="selPC(${c.id})" style="padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--line)">${c.name} <span style="color:var(--ink3)">${c.phone}</span></div>`).join('');}
+function searchPC(){const q=el('pos-cq')?.value.toLowerCase()||'';const r=el('pos-cr');if(!q){r.style.display='none';return;}const f=S.customers.filter(c=>c.name.toLowerCase().includes(q)||c.phone.includes(q));if(!f.length){r.style.display='none';return;}r.style.display='block';r.innerHTML=f.map(c=>`<div onclick="selPC('${c.id}')" style="padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--line)">${c.name} <span style="color:var(--ink3)">${c.phone}</span></div>`).join('');}
 function selPC(id){const c=S.customers.find(x=>x.id===id);if(!c)return;S.posCust=c;el('pos-cq').value='';el('pos-cr').style.display='none';el('pos-cs').textContent=c.name+' — '+c.phone;el('pos-cs').style.display='block';if(CFG.loyaltyEnabled&&c.points>0){el('pos-loyalty').style.display='block';el('pos-loyalty').innerHTML=`💜 ${c.name} has <strong>${c.points} pts</strong> (${frs(c.points*CFG.pointValue)} value)`;}}
 function openQAC(){openModal(`${mhd('+New Customer')}<div class="fg"><label>Name *</label><input type="text" id="qac-n"></div><div class="fg"><label>Phone *</label><input type="tel" id="qac-p" maxlength="10"></div><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveQAC()">Add</button></div>`);}
 async function saveQAC(){
@@ -2816,7 +2816,7 @@ function _renderCustsInner(){
   const q=(el('cust-q')?.value||'').toLowerCase();
   let list=S.customers;if(q)list=list.filter(c=>c.name.toLowerCase().includes(q)||c.phone.includes(q)||c.plates.some(p=>p.toLowerCase().includes(q)));
   el('cust-kpis').innerHTML=kc('Total',S.customers.length,'Registered','up')+kc('Today',S.customers.filter(c=>new Date(c.lastVisit).toDateString()===new Date().toDateString()).length,'Visited','')+kc('Total Visits',S.customers.reduce((a,c)=>a+c.visits,0),'All time','')+kc('Total Points',S.customers.reduce((a,c)=>a+(c.points||0),0),'Loyalty points','up');
-  el('cust-grid').innerHTML=list.map(c=>`<div style="background:#fff;border:1px solid var(--line);border-radius:var(--r2);padding:14px;box-shadow:var(--sh);cursor:pointer" onclick="openCustDetail(${c.id})" onmouseover="this.style.borderColor='var(--blue)'" onmouseout="this.style.borderColor='var(--line)'">
+  el('cust-grid').innerHTML=list.map(c=>`<div style="background:#fff;border:1px solid var(--line);border-radius:var(--r2);padding:14px;box-shadow:var(--sh);cursor:pointer" onclick="openCustDetail('${c.id}')" onmouseover="this.style.borderColor='var(--blue)'" onmouseout="this.style.borderColor='var(--line)'">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
       <div style="width:40px;height:40px;border-radius:50%;background:var(--blt);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:var(--blue);flex-shrink:0">${c.name.split(' ').map(x=>x[0]).join('').slice(0,2)}</div>
       <div><div style="font-size:13px;font-weight:800">${c.name}</div><div style="font-size:11px;color:var(--ink3)">📞 ${c.phone}</div></div>
@@ -2914,7 +2914,7 @@ function renderInv(){
   el('inv-tabs').innerHTML=tabs(['products','low-stock','valuation'],(S.invTab||'products'),"setInvTab");
   const c=el('inv-content');
   if((S.invTab||'products')==='products'){
-    c.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">${list.map(p=>`<div class="prod-card" onclick="openInvModal(${p.id})">
+    c.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">${list.map(p=>`<div class="prod-card" onclick="openInvModal('${p.id}')">
       <div class="row aic jb mb2"><div style="font-size:13px;font-weight:700">${p.name}</div><span class="stock-badge ${p.stock===0?'stock-out':p.stock<=p.minStock?'stock-low':'stock-ok'}">${p.stock===0?'OUT':p.stock<=p.minStock?'LOW':'OK'}</span></div>
       <div style="font-size:10px;color:var(--ink3);margin-bottom:8px">SKU: ${p.sku} • ${p.brand}</div>
       <div class="g2" style="gap:8px;font-size:12px">
@@ -2926,7 +2926,7 @@ function renderInv(){
     </div>`).join('')}</div>`;
   } else if((S.invTab||'products')==='low-stock'){
     const low=S.products.filter(p=>p.stock<=p.minStock);
-    c.innerHTML=`<div class="tw"><table><thead><tr><th>Product</th><th>SKU</th><th>Current</th><th>Min</th><th>Max</th><th>Supplier</th><th>Action</th></tr></thead><tbody>${low.map(p=>`<tr><td style="font-weight:700">${p.name}</td><td style="color:var(--ink3)">${p.sku}</td><td><span class="stock-badge ${p.stock===0?'stock-out':'stock-low'}">${p.stock}</span></td><td>${p.minStock}</td><td>${p.maxStock}</td><td>${S.suppliers.find(s=>s.id===p.supplierId)?.name||'—'}</td><td><button class="btn bp bsm" onclick="quickReorder(${p.id})">📦 Reorder</button></td></tr>`).join('')}</tbody></table></div>`;
+    c.innerHTML=`<div class="tw"><table><thead><tr><th>Product</th><th>SKU</th><th>Current</th><th>Min</th><th>Max</th><th>Supplier</th><th>Action</th></tr></thead><tbody>${low.map(p=>`<tr><td style="font-weight:700">${p.name}</td><td style="color:var(--ink3)">${p.sku}</td><td><span class="stock-badge ${p.stock===0?'stock-out':'stock-low'}">${p.stock}</span></td><td>${p.minStock}</td><td>${p.maxStock}</td><td>${S.suppliers.find(s=>s.id===p.supplierId)?.name||'—'}</td><td><button class="btn bp bsm" onclick="quickReorder('${p.id}')">📦 Reorder</button></td></tr>`).join('')}</tbody></table></div>`;
   } else {
     c.innerHTML=`<div class="tw"><table><thead><tr><th>Product</th><th>Cost Price</th><th>Stock</th><th>Total Value</th><th>Selling Price</th><th>Profit/Unit</th></tr></thead><tbody>${S.products.map(p=>`<tr><td style="font-weight:700">${p.name}</td><td>${frs(p.costPrice)}</td><td>${p.stock} ${p.unit}</td><td style="font-weight:700">${frs(p.costPrice*p.stock)}</td><td style="color:var(--blue)">${frs(p.sellingPrice)}</td><td style="color:var(--green)">${frs(p.sellingPrice-p.costPrice)}</td></tr>`).join('')}<tr style="font-weight:800;background:var(--surf)"><td>TOTAL</td><td></td><td></td><td>${frs(totalVal)}</td><td></td><td></td></tr></tbody></table></div>`;
   }
@@ -2942,7 +2942,7 @@ function openInvModal(id=null){
     <div class="g2" style="gap:8px"><div class="fg"><label>Cost Price (₹)</label><input type="number" id="ip-cost" value="${p?.costPrice||''}"></div><div class="fg"><label>Selling Price (₹)</label><input type="number" id="ip-sell" value="${p?.sellingPrice||''}"></div></div>
     <div class="g3" style="gap:8px"><div class="fg"><label>Current Stock</label><input type="number" id="ip-stk" value="${p?.stock||'0'}"></div><div class="fg"><label>Min Stock</label><input type="number" id="ip-min" value="${p?.minStock||'5'}"></div><div class="fg"><label>Max Stock</label><input type="number" id="ip-max" value="${p?.maxStock||'100'}"></div></div>
     <div class="fg"><label>Unit</label><select id="ip-unit"><option ${p?.unit==='pcs'?'selected':''}>pcs</option><option ${p?.unit==='bottle'?'selected':''}>bottle</option><option ${p?.unit==='set'?'selected':''}>set</option><option ${p?.unit==='kit'?'selected':''}>kit</option><option ${p?.unit==='pack'?'selected':''}>pack</option></select></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button>${p?`<button class="btn br2 bsm" onclick="delProd(${p.id})">Delete</button>`:''}<button class="btn bp" onclick="saveInv(${id||'null'})">${p?'Update':'Add'}</button></div>`);
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button>${p?`<button class="btn br2 bsm" onclick="delProd('${p.id}')">Delete</button>`:''}<button class="btn bp" onclick="saveInv('${id||'null'}')">${p?'Update':'Add'}</button></div>`);
 }
 function saveInv(id){
   const n=el('ip-n')?.value.trim();if(!n){toast('Name required','e');return;}
@@ -2998,7 +2998,7 @@ function _renderPurInner(){
   el('pur-kpis').innerHTML=kc('Total Orders',S.purchaseOrders.length,'All time','')+kc('Pending',pending+' orders','Awaiting receipt',pending>0?'dn':'')+kc('Outstanding',frs(totalOut),'Supplier payable',totalOut>0?'dn':'')+kc('Total Purchased',frs(S.purchaseOrders.filter(o=>o.status==='received').reduce((a,o)=>a+o.total,0)),'Received','up');
   const c=el('pur-content');
   if((S.purTab||'orders')==='orders'){
-    c.innerHTML=`<div class="tw"><table><thead><tr><th>PO #</th><th>Supplier</th><th>Items</th><th>Total</th><th>Date</th><th>Status</th><th>Paid</th><th>Actions</th></tr></thead><tbody>${S.purchaseOrders.map(o=>{const sup=S.suppliers.find(s=>s.id===o.supplierId);return`<tr><td style="font-weight:700;color:var(--blue)">${o.poNum}</td><td>${sup?.name||'—'}</td><td>${o.items.length} items</td><td style="font-weight:700">${frs(o.total)}</td><td style="color:var(--ink3)">${fdt(o.date)}</td><td><span class="bx ${sbx(o.status)}">${o.status}</span></td><td><span class="bx ${o.paid?'bok':'bw'}">${o.paid?'Paid':'Unpaid'}</span></td><td style="display:flex;gap:5px">${o.status==='pending'?`<button class="btn bg2 bsm" onclick="receivePO(${o.id})">✓ Receive</button>`:''}<button class="btn bs bsm" onclick="viewPO(${o.id})">View</button></td></tr>`;}).join('')}</tbody></table></div>`;
+    c.innerHTML=`<div class="tw"><table><thead><tr><th>PO #</th><th>Supplier</th><th>Items</th><th>Total</th><th>Date</th><th>Status</th><th>Paid</th><th>Actions</th></tr></thead><tbody>${S.purchaseOrders.map(o=>{const sup=S.suppliers.find(s=>s.id===o.supplierId);return`<tr><td style="font-weight:700;color:var(--blue)">${o.poNum}</td><td>${sup?.name||'—'}</td><td>${o.items.length} items</td><td style="font-weight:700">${frs(o.total)}</td><td style="color:var(--ink3)">${fdt(o.date)}</td><td><span class="bx ${sbx(o.status)}">${o.status}</span></td><td><span class="bx ${o.paid?'bok':'bw'}">${o.paid?'Paid':'Unpaid'}</span></td><td style="display:flex;gap:5px">${o.status==='pending'?`<button class="btn bg2 bsm" onclick="receivePO('${o.id}')">✓ Receive</button>`:''}<button class="btn bs bsm" onclick="viewPO('${o.id}')">View</button></td></tr>`;}).join('')}</tbody></table></div>`;
   } else {
     c.innerHTML=`<div class="tw"><table><thead><tr><th>PO #</th><th>Supplier</th><th>Total</th><th>Date</th><th>Status</th></tr></thead><tbody>${S.purchaseOrders.filter(o=>o.status==='received').map(o=>{const sup=S.suppliers.find(s=>s.id===o.supplierId);return`<tr><td style="font-weight:700">${o.poNum}</td><td>${sup?.name||'—'}</td><td>${frs(o.total)}</td><td>${fdt(o.date)}</td><td><span class="bx bok">Received</span></td></tr>`;}).join('')}</tbody></table></div>`;
   }
@@ -3041,7 +3041,7 @@ function receivePO(id){
   po.items.forEach(item=>{const p=S.products.find(x=>x.id===item.prodId);if(p){p.stock+=item.qty;if(item.cost>0)p.costPrice=item.cost;}});
   toast('PO received — stock updated!','ok');renderPur();renderInv();
 }
-function viewPO(id){const po=S.purchaseOrders.find(x=>x.id===id);if(!po)return;const sup=S.suppliers.find(s=>s.id===po.supplierId);openModal(`${mhd('PO: '+po.poNum)}<div class="g2 mb3" style="gap:8px">${kc('Supplier',sup?.name||'—','','')}${kc('Total',frs(po.total),po.items.length+' items','')}</div><div class="tw"><table><thead><tr><th>Product</th><th>Qty</th><th>Unit Cost</th><th>Total</th></tr></thead><tbody>${po.items.map(i=>{const p=S.products.find(x=>x.id===i.prodId);return`<tr><td style="font-weight:600">${p?.name||'—'}</td><td>${i.qty}</td><td>${frs(i.cost)}</td><td style="font-weight:700">${frs(i.qty*i.cost)}</td></tr>`;}).join('')}</tbody></table></div><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="btn bs" onclick="closeModal()">Close</button>${!po.paid?`<button class="btn bg2" onclick="markPOPaid(${id})">Mark Paid</button>`:''}</div>`);}
+function viewPO(id){const po=S.purchaseOrders.find(x=>x.id===id);if(!po)return;const sup=S.suppliers.find(s=>s.id===po.supplierId);openModal(`${mhd('PO: '+po.poNum)}<div class="g2 mb3" style="gap:8px">${kc('Supplier',sup?.name||'—','','')}${kc('Total',frs(po.total),po.items.length+' items','')}</div><div class="tw"><table><thead><tr><th>Product</th><th>Qty</th><th>Unit Cost</th><th>Total</th></tr></thead><tbody>${po.items.map(i=>{const p=S.products.find(x=>x.id===i.prodId);return`<tr><td style="font-weight:600">${p?.name||'—'}</td><td>${i.qty}</td><td>${frs(i.cost)}</td><td style="font-weight:700">${frs(i.qty*i.cost)}</td></tr>`;}).join('')}</tbody></table></div><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="btn bs" onclick="closeModal()">Close</button>${!po.paid?`<button class="btn bg2" onclick="markPOPaid('${id}')">Mark Paid</button>`:''}</div>`);}
 function markPOPaid(id){const po=S.purchaseOrders.find(x=>x.id===id);if(!po)return;po.paid=true;const sup=S.suppliers.find(s=>s.id===po.supplierId);if(sup)sup.outstanding=Math.max(0,sup.outstanding-po.total);closeModal();toast('Marked paid','ok');renderPur();}
 
 // ══════════════════════════════════════════════════════════
@@ -3052,7 +3052,7 @@ function renderSup(){
     <td style="font-weight:700">${s.name}</td><td>${s.contact}</td><td>${s.phone}</td><td style="color:var(--ink3)">${s.email}</td>
     <td style="font-size:11px">${(s.products||[]).join(', ')}</td>
     <td style="font-weight:700;color:${s.outstanding>0?'var(--red)':'var(--green)'}">${frs(s.outstanding||0)}</td>
-    <td style="display:flex;gap:5px"><button class="btn bs bsm" onclick="openSupModal(${s.id})">Edit</button><button class="btn br2 bsm" onclick="delSup(${s.id})">Del</button></td>
+    <td style="display:flex;gap:5px"><button class="btn bs bsm" onclick="openSupModal('${s.id}')">Edit</button><button class="btn br2 bsm" onclick="delSup('${s.id}')">Del</button></td>
   </tr>`).join('');
 }
 function openSupModal(id=null){
@@ -3061,7 +3061,7 @@ function openSupModal(id=null){
     <div class="g2" style="gap:8px"><div class="fg"><label>Company Name *</label><input type="text" id="sm-n" value="${s?.name||''}"></div><div class="fg"><label>Contact Person</label><input type="text" id="sm-c" value="${s?.contact||''}"></div></div>
     <div class="g2" style="gap:8px"><div class="fg"><label>Phone</label><input type="tel" id="sm-ph" value="${s?.phone||''}" maxlength="10"></div><div class="fg"><label>Email</label><input type="email" id="sm-em" value="${s?.email||''}"></div></div>
     <div class="fg"><label>Address</label><input type="text" id="sm-ad" value="${s?.address||''}"></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveSup(${id||'null'})">${s?'Update':'Add'}</button></div>`);
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveSup('${id||'null'}')">${s?'Update':'Add'}</button></div>`);
 }
 function saveSup(id){
   const n=el('sm-n')?.value.trim();if(!n){toast('Name required','e');return;}
@@ -3098,9 +3098,9 @@ function renderPayroll(){
         <div><div style="color:var(--ink3);font-size:9px">NET</div><div style="font-weight:800;color:var(--blue)">${frs(net)}</div></div>
       </div>
       <div class="row g8">
-        <button class="btn bs bsm" onclick="openStaffM(${s.id})">Edit</button>
-        <button class="btn bcy bsm" onclick="printPayslip(${s.id})">🖨 Payslip</button>
-        <button class="btn br2 bsm" onclick="delStaff(${s.id})">Remove</button>
+        <button class="btn bs bsm" onclick="openStaffM('${s.id}')">Edit</button>
+        <button class="btn bcy bsm" onclick="printPayslip('${s.id}')">🖨 Payslip</button>
+        <button class="btn br2 bsm" onclick="delStaff('${s.id}')">Remove</button>
       </div>
     </div>`;}).join('')}</div>`;
   } else if(S.payTab==='attendance'){
@@ -3130,7 +3130,7 @@ function renderPayroll(){
     const mon=new Date().toLocaleString('default',{month:'long',year:'numeric'});
     c.innerHTML=`<div class="row aic jb mb4"><div style="font-size:13px;font-weight:800">Monthly Salary — ${mon}</div></div>
     <div class="tw"><table><thead><tr><th>Employee</th><th>Role</th><th>Basic</th><th>HRA</th><th>Allowances</th><th>Gross</th><th>Days</th><th>Net</th><th>Action</th></tr></thead><tbody>
-    ${S.staff.map(s=>{const days=S.attendance.filter(a=>a.staffId===s.id&&a.status==='present'&&a.date.startsWith(new Date().toISOString().slice(0,7))).length||26;const gross=s.basic+s.hra+s.allowances;const net=Math.round(gross*days/26);return`<tr><td style="font-weight:700">${s.name}</td><td style="color:var(--ink3)">${s.role}</td><td>${frs(s.basic)}</td><td>${frs(s.hra)}</td><td>${frs(s.allowances)}</td><td style="font-weight:700">${frs(gross)}</td><td>${days}</td><td style="font-weight:800;color:var(--blue)">${frs(net)}</td><td><button class="btn bcy bsm" onclick="printPayslip(${s.id})">🖨 Payslip</button></td></tr>`;}).join('')}
+    ${S.staff.map(s=>{const days=S.attendance.filter(a=>a.staffId===s.id&&a.status==='present'&&a.date.startsWith(new Date().toISOString().slice(0,7))).length||26;const gross=s.basic+s.hra+s.allowances;const net=Math.round(gross*days/26);return`<tr><td style="font-weight:700">${s.name}</td><td style="color:var(--ink3)">${s.role}</td><td>${frs(s.basic)}</td><td>${frs(s.hra)}</td><td>${frs(s.allowances)}</td><td style="font-weight:700">${frs(gross)}</td><td>${days}</td><td style="font-weight:800;color:var(--blue)">${frs(net)}</td><td><button class="btn bcy bsm" onclick="printPayslip('${s.id}')">🖨 Payslip</button></td></tr>`;}).join('')}
     <tr style="background:var(--surf);font-weight:800"><td colspan="5">TOTAL</td><td>${frs(S.staff.reduce((a,s)=>a+s.basic+s.hra+s.allowances,0))}</td><td></td><td>${frs(S.staff.reduce((a,s)=>a+s.basic+s.hra+s.allowances,0))}</td><td></td></tr>
     </tbody></table></div>`;
   } else {
@@ -3401,8 +3401,8 @@ function renderLoyalty(){
         <div><div style="font-size:13px;font-weight:700">${r.reward}</div><div style="font-size:11px;color:var(--ink3)">After ${r.visits} completed visits</div></div>
         <div class="row g8">
           <span class="bx ${r.active?'bok':'bgr'}">${r.active?'Active':'Inactive'}</span>
-          <button class="btn bs bsm" onclick="toggleRule(${r.id})">${r.active?'Disable':'Enable'}</button>
-          <button class="btn br2 bsm" onclick="delRule(${r.id})">Del</button>
+          <button class="btn bs bsm" onclick="toggleRule('${r.id}')">${r.active?'Disable':'Enable'}</button>
+          <button class="btn br2 bsm" onclick="delRule('${r.id}')">Del</button>
         </div>
       </div>
     </div>`).join('')}`;
@@ -3443,9 +3443,9 @@ function renderPkg(){
       <div style="text-align:right"><div style="font-size:10px;color:var(--ink3)">Valid ${p.validity} days</div><div style="font-size:10px;color:var(--ink3);margin-top:2px">${p.cats.join(', ')||'All'}</div></div>
     </div>
     <div class="row g8">
-      <button class="btn bs bsm" onclick="openPkgM(${p.id})">Edit</button>
-      <button class="btn ${p.active?'br2':'bg2'} bsm" onclick="togglePkg(${p.id})">${p.active?'Disable':'Enable'}</button>
-      <button class="btn br2 bsm" onclick="delPkg(${p.id})">Delete</button>
+      <button class="btn bs bsm" onclick="openPkgM('${p.id}')">Edit</button>
+      <button class="btn ${p.active?'br2':'bg2'} bsm" onclick="togglePkg('${p.id}')">${p.active?'Disable':'Enable'}</button>
+      <button class="btn br2 bsm" onclick="delPkg('${p.id}')">Delete</button>
     </div>
   </div>`).join('');
 }
@@ -3514,9 +3514,9 @@ function renderOffers(){
     ${o.cats.length?`<div style="font-size:11px;color:var(--ink3);margin-bottom:6px">Categories: ${o.cats.join(', ')}</div>`:''}
     <div style="font-size:10px;color:var(--ink3);margin-bottom:10px">${o.startDate?'From: '+o.startDate:''} ${o.endDate?'— To: '+o.endDate:''}</div>
     <div class="row g8">
-      <button class="btn bs bsm" onclick="openOfferM(${o.id})">Edit</button>
-      <button class="btn ${o.active?'br2':'bg2'} bsm" onclick="toggleOffer(${o.id})">${o.active?'Disable':'Enable'}</button>
-      <button class="btn br2 bsm" onclick="delOffer(${o.id})">Delete</button>
+      <button class="btn bs bsm" onclick="openOfferM('${o.id}')">Edit</button>
+      <button class="btn ${o.active?'br2':'bg2'} bsm" onclick="toggleOffer('${o.id}')">${o.active?'Disable':'Enable'}</button>
+      <button class="btn br2 bsm" onclick="delOffer('${o.id}')">Delete</button>
     </div>
   </div>`).join('');
 }
@@ -3582,7 +3582,7 @@ function renderAdm(){
     c.innerHTML=`<div class="row aic jb mb3"><div style="font-size:13px;font-weight:800">Wash Services</div><button class="btn bp bsm" onclick="openSvcM()">+ Add Service</button></div>
     <div style="background:var(--blt);border-radius:var(--r);padding:10px 12px;margin-bottom:12px;font-size:11px;color:var(--blue)">ℹ Click <strong>💰 Set Pricing</strong> to define per-category prices. <em>auto</em> = Base × multiplier. Zero price = blocks checkout.</div>
     <div class="tw"><table><thead><tr><th>Service</th><th>Type</th><th>Base Price</th><th>Duration</th><th>Categories Priced</th><th>Actions</th></tr></thead><tbody>
-    ${S.washSvcs.map(s=>{const configured=ALL_CATS.filter(c=>s.prices&&s.prices[c.cat]>0).length;return`<tr><td style="font-weight:700">${s.name}</td><td><span class="bx bi">${s.cat}</span></td><td style="color:var(--blue);font-weight:700">${frs(s.basePrice)}</td><td style="color:var(--ink3)">${s.dur}min</td><td><span class="bx ${configured===ALL_CATS.length?'bok':configured>0?'bw':'bgr'}">${configured}/${ALL_CATS.length} set</span></td><td style="display:flex;gap:5px"><button class="btn bp bsm" onclick="openPricingMatrix(${s.id})">💰 Set Pricing</button><button class="btn bs bsm" onclick="openSvcM(${s.id})">Edit</button><button class="btn br2 bsm" onclick="delSvc(${s.id})">Del</button></td></tr>`;}).join('')}
+    ${S.washSvcs.map(s=>{const configured=ALL_CATS.filter(c=>s.prices&&s.prices[c.cat]>0).length;return`<tr><td style="font-weight:700">${s.name}</td><td><span class="bx bi">${s.cat}</span></td><td style="color:var(--blue);font-weight:700">${frs(s.basePrice)}</td><td style="color:var(--ink3)">${s.dur}min</td><td><span class="bx ${configured===ALL_CATS.length?'bok':configured>0?'bw':'bgr'}">${configured}/${ALL_CATS.length} set</span></td><td style="display:flex;gap:5px"><button class="btn bp bsm" onclick="openPricingMatrix('${s.id}')">💰 Set Pricing</button><button class="btn bs bsm" onclick="openSvcM('${s.id}')">Edit</button><button class="btn br2 bsm" onclick="delSvc('${s.id}')">Del</button></td></tr>`;}).join('')}
     </tbody></table></div>`;
   } else if(section==='service-pricing'){
     c.innerHTML=`<div class="row aic jb mb3"><div style="font-size:13px;font-weight:800">Service Pricing Matrix — All Categories</div><div class="row g8"><button class="btn bs bsm" onclick="bulkFromMultiplier()">↺ Reset to Multipliers</button><button class="btn bp bsm" onclick="savePricingMatrix()">💾 Save All</button></div></div>
@@ -3595,11 +3595,11 @@ function renderAdm(){
   } else if(section==='vehicle-categories'){
     c.innerHTML=`<div class="sec mb3">Category Multipliers <span style="font-weight:500;color:var(--ink3);font-size:11px">(used when no explicit price set)</span></div><div class="tw"><table><thead><tr><th>Type</th><th>Category</th><th>Multiplier</th><th>Example (₹100 base)</th></tr></thead><tbody>${ALL_CATS.map(row=>`<tr><td style="font-size:11px;color:var(--ink3)">${row.typeLabel}</td><td style="font-weight:700">${row.cat}</td><td><input type="number" value="${CAT_MUL[row.cat]||1}" step="0.05" min="0.1" max="10" style="width:75px;padding:4px 7px;font-size:12px" onchange="CAT_MUL['${row.cat}']=parseFloat(this.value)||1;toast('Updated','ok')"></td><td style="color:var(--blue);font-weight:700">${frs(100*(CAT_MUL[row.cat]||1))}</td></tr>`).join('')}</tbody></table></div>`;
   } else if(section==='packages'){
-    c.innerHTML=`<div class="row aic jb mb3"><div style="font-size:13px;font-weight:800">Packages</div><button class="btn bp bsm" onclick="openPkgM()">+ Create</button></div><div class="tw"><table><thead><tr><th>Package</th><th>Services</th><th>Price</th><th>Discount</th><th>Valid</th><th>Status</th><th></th></tr></thead><tbody>${S.packages.map(p=>`<tr><td style="font-weight:700">${p.name}</td><td style="font-size:11px">${(p.svcs||p.services||[]).map?.(s=>typeof s==='string'?s:s.name||'').join(', ')||''}</td><td style="color:var(--blue);font-weight:700">${frs(p.price)}</td><td style="color:var(--green)">${frs(p.discount)}</td><td>${p.validity}d</td><td><span class="bx ${p.active?'bok':'bgr'}">${p.active?'On':'Off'}</span></td><td><button class="btn bs bsm" onclick="openPkgM(${p.id})">Edit</button></td></tr>`).join('')}</tbody></table></div>`;
+    c.innerHTML=`<div class="row aic jb mb3"><div style="font-size:13px;font-weight:800">Packages</div><button class="btn bp bsm" onclick="openPkgM()">+ Create</button></div><div class="tw"><table><thead><tr><th>Package</th><th>Services</th><th>Price</th><th>Discount</th><th>Valid</th><th>Status</th><th></th></tr></thead><tbody>${S.packages.map(p=>`<tr><td style="font-weight:700">${p.name}</td><td style="font-size:11px">${(p.svcs||p.services||[]).map?.(s=>typeof s==='string'?s:s.name||'').join(', ')||''}</td><td style="color:var(--blue);font-weight:700">${frs(p.price)}</td><td style="color:var(--green)">${frs(p.discount)}</td><td>${p.validity}d</td><td><span class="bx ${p.active?'bok':'bgr'}">${p.active?'On':'Off'}</span></td><td><button class="btn bs bsm" onclick="openPkgM('${p.id}')">Edit</button></td></tr>`).join('')}</tbody></table></div>`;
   } else if(section==='offers'){
-    c.innerHTML=`<div class="row aic jb mb3"><div style="font-size:13px;font-weight:800">Offers</div><button class="btn bp bsm" onclick="openOfferM()">+ Create</button></div><div class="tw"><table><thead><tr><th>Offer</th><th>Type</th><th>Value</th><th>Period</th><th>Used</th><th>Status</th><th></th></tr></thead><tbody>${S.offers.map(o=>`<tr><td style="font-weight:700">${o.name}</td><td style="font-size:11px">${o.type}</td><td style="color:var(--pink);font-weight:700">${o.type==='percentage'?o.value+'%':frs(o.value)}</td><td style="font-size:10px;color:var(--ink3)">${o.startDate||'—'} — ${o.endDate||'—'}</td><td>${o.usedCount}</td><td><span class="bx ${o.active?'bok':'bgr'}">${o.active?'On':'Off'}</span></td><td><button class="btn bs bsm" onclick="openOfferM(${o.id})">Edit</button></td></tr>`).join('')}</tbody></table></div>`;
+    c.innerHTML=`<div class="row aic jb mb3"><div style="font-size:13px;font-weight:800">Offers</div><button class="btn bp bsm" onclick="openOfferM()">+ Create</button></div><div class="tw"><table><thead><tr><th>Offer</th><th>Type</th><th>Value</th><th>Period</th><th>Used</th><th>Status</th><th></th></tr></thead><tbody>${S.offers.map(o=>`<tr><td style="font-weight:700">${o.name}</td><td style="font-size:11px">${o.type}</td><td style="color:var(--pink);font-weight:700">${o.type==='percentage'?o.value+'%':frs(o.value)}</td><td style="font-size:10px;color:var(--ink3)">${o.startDate||'—'} — ${o.endDate||'—'}</td><td>${o.usedCount}</td><td><span class="bx ${o.active?'bok':'bgr'}">${o.active?'On':'Off'}</span></td><td><button class="btn bs bsm" onclick="openOfferM('${o.id}')">Edit</button></td></tr>`).join('')}</tbody></table></div>`;
   } else if(section==='loyalty'){
-    c.innerHTML=`<div class="sec mb3">Loyalty Program</div><div class="card mb4"><div class="g2" style="gap:12px"><div class="fg"><label>Points Per ₹1</label><input type="number" value="${CFG.pointsPerRupee}" step="0.01" onchange="CFG.pointsPerRupee=parseFloat(this.value)||0.1"><div style="font-size:10px;color:var(--ink3);margin-top:2px">1 pt per ${frs(1/CFG.pointsPerRupee)}</div></div><div class="fg"><label>₹ Per Point</label><input type="number" value="${CFG.pointValue}" step="0.01" onchange="CFG.pointValue=parseFloat(this.value)||0.1"><div style="font-size:10px;color:var(--ink3);margin-top:2px">100 pts = ${frs(100*CFG.pointValue)}</div></div><div class="fg"><label>Expiry (days)</label><input type="number" value="${CFG.pointExpiry}" onchange="CFG.pointExpiry=parseInt(this.value)||365"></div><div class="fg"><label>Enabled</label><select onchange="CFG.loyaltyEnabled=this.value==='true'"><option value="true" ${CFG.loyaltyEnabled?'selected':''}>Yes</option><option value="false" ${!CFG.loyaltyEnabled?'selected':''}>No</option></select></div></div><button class="btn bp bsm" onclick="toast('Saved!','ok')">Save</button></div><div class="row aic jb mb3"><div style="font-size:12px;font-weight:800">Visit Rewards</div><button class="btn bp bsm" onclick="openRuleM()">+ Rule</button></div>${CFG.visitRewards.map(r=>`<div class="reward-card"><div class="row aic jb"><div><div style="font-size:13px;font-weight:700">${r.reward}</div><div style="font-size:11px;color:var(--ink3)">After ${r.visits} visits</div></div><div class="row g8"><span class="bx ${r.active?'bok':'bgr'}">${r.active?'On':'Off'}</span><button class="btn bs bsm" onclick="toggleRule(${r.id})">${r.active?'Disable':'Enable'}</button><button class="btn br2 bsm" onclick="delRule(${r.id})">Del</button></div></div></div>`).join('')}`;
+    c.innerHTML=`<div class="sec mb3">Loyalty Program</div><div class="card mb4"><div class="g2" style="gap:12px"><div class="fg"><label>Points Per ₹1</label><input type="number" value="${CFG.pointsPerRupee}" step="0.01" onchange="CFG.pointsPerRupee=parseFloat(this.value)||0.1"><div style="font-size:10px;color:var(--ink3);margin-top:2px">1 pt per ${frs(1/CFG.pointsPerRupee)}</div></div><div class="fg"><label>₹ Per Point</label><input type="number" value="${CFG.pointValue}" step="0.01" onchange="CFG.pointValue=parseFloat(this.value)||0.1"><div style="font-size:10px;color:var(--ink3);margin-top:2px">100 pts = ${frs(100*CFG.pointValue)}</div></div><div class="fg"><label>Expiry (days)</label><input type="number" value="${CFG.pointExpiry}" onchange="CFG.pointExpiry=parseInt(this.value)||365"></div><div class="fg"><label>Enabled</label><select onchange="CFG.loyaltyEnabled=this.value==='true'"><option value="true" ${CFG.loyaltyEnabled?'selected':''}>Yes</option><option value="false" ${!CFG.loyaltyEnabled?'selected':''}>No</option></select></div></div><button class="btn bp bsm" onclick="toast('Saved!','ok')">Save</button></div><div class="row aic jb mb3"><div style="font-size:12px;font-weight:800">Visit Rewards</div><button class="btn bp bsm" onclick="openRuleM()">+ Rule</button></div>${CFG.visitRewards.map(r=>`<div class="reward-card"><div class="row aic jb"><div><div style="font-size:13px;font-weight:700">${r.reward}</div><div style="font-size:11px;color:var(--ink3)">After ${r.visits} visits</div></div><div class="row g8"><span class="bx ${r.active?'bok':'bgr'}">${r.active?'On':'Off'}</span><button class="btn bs bsm" onclick="toggleRule('${r.id}')">${r.active?'Disable':'Enable'}</button><button class="btn br2 bsm" onclick="delRule('${r.id}')">Del</button></div></div></div>`).join('')}`;
   } else if(section==='payment-methods'){
     const pmRows=CFG.payMethods.map(m=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border:1.5px solid var(--line2);border-radius:var(--r2);background:#fff"><div style="display:flex;align-items:center;gap:10px"><span style="font-size:18px">${m.icon}</span><div><div style="font-size:13px;font-weight:700">${m.label}</div><div style="font-size:10px;color:var(--ink3)">${m.id}</div></div></div><label style="display:flex;align-items:center;gap:7px;cursor:pointer"><span style="font-size:11px;font-weight:700;color:${m.enabled?'var(--green)':'var(--ink3)'}">${m.enabled?'Enabled':'Disabled'}</span><input type="checkbox" style="width:auto;width:16px;height:16px;accent-color:var(--blue)" ${m.enabled?'checked':''} onchange="CFG.payMethods.find(x=>x.id==='${m.id}').enabled=this.checked;this.previousElementSibling.textContent=this.checked?'Enabled':'Disabled';this.previousElementSibling.style.color=this.checked?'var(--green)':'var(--ink3)'"></label></div>`).join('');
     c.innerHTML=`<div class="sec mb3">Payment Methods</div><div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">${pmRows}</div><button class="btn bp bsm" onclick="toast('Payment methods saved!','ok')">Save</button>`;
@@ -3665,12 +3665,12 @@ function renderAdm(){
       <td><span class="bx ${log.status==='sent'?'bok':log.status==='failed'?'be':log.status==='sending'?'bi':'bgr'}">${log.status}</span></td>
       <td style="text-align:center;color:var(--ink3)">${log.attempts}</td>
       <td style="font-size:10px;color:var(--ink3);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${log.text.substring(0,55)}…</td>
-      <td><button class="btn bs bsm" onclick="sendSMS(${log.logId})">↺ Resend</button></td>
+      <td><button class="btn bs bsm" onclick="sendSMS('${log.logId}')">↺ Resend</button></td>
     </tr>`).join('')}</tbody></table></div>`:`<div class="empty card">No SMS logs yet. Logs appear here after sending receipts via SMS.</div>`}`;
   } else if(section==='taxes'){
     c.innerHTML=`<div class="sec mb3">Tax Configuration</div><div class="card"><div class="g2" style="gap:12px"><div class="fg"><label>GST/Tax Rate (%)</label><input type="number" value="${CFG.gstRate}" onchange="CFG.gstRate=parseFloat(this.value)||18"></div><div class="fg"><label>Tax Label</label><input type="text" value="GST"></div><div class="fg"><label>Tax on Services</label><select><option selected>Optional at checkout</option><option>Always</option><option>Never</option></select></div><div class="fg"><label>Tax on Products</label><select><option>Optional</option><option selected>Always</option><option>Never</option></select></div></div><button class="btn bp bsm" onclick="toast('Saved!','ok')">Save</button></div>`;
   } else if(section==='employees'){
-    c.innerHTML=`<div class="row aic jb mb3"><div style="font-size:13px;font-weight:800">Employees</div><button class="btn bp bsm" onclick="openStaffM()">+ Add</button></div><div class="tw"><table><thead><tr><th>Name</th><th>Role</th><th>Phone</th><th>Basic</th><th>Net</th><th>Status</th><th></th></tr></thead><tbody>${S.staff.map(s=>`<tr><td style="font-weight:700">${s.name}</td><td>${s.role}</td><td>${s.phone}</td><td>${frs(s.basic)}</td><td style="color:var(--blue);font-weight:700">${frs(s.basic+s.hra+s.allowances)}</td><td><span class="bx ${s.active?'bok':'be'}">${s.active?'Active':'Off'}</span></td><td><button class="btn bs bsm" onclick="openStaffM(${s.id})">Edit</button></td></tr>`).join('')}</tbody></table></div>`;
+    c.innerHTML=`<div class="row aic jb mb3"><div style="font-size:13px;font-weight:800">Employees</div><button class="btn bp bsm" onclick="openStaffM()">+ Add</button></div><div class="tw"><table><thead><tr><th>Name</th><th>Role</th><th>Phone</th><th>Basic</th><th>Net</th><th>Status</th><th></th></tr></thead><tbody>${S.staff.map(s=>`<tr><td style="font-weight:700">${s.name}</td><td>${s.role}</td><td>${s.phone}</td><td>${frs(s.basic)}</td><td style="color:var(--blue);font-weight:700">${frs(s.basic+s.hra+s.allowances)}</td><td><span class="bx ${s.active?'bok':'be'}">${s.active?'Active':'Off'}</span></td><td><button class="btn bs bsm" onclick="openStaffM('${s.id}')">Edit</button></td></tr>`).join('')}</tbody></table></div>`;
   } else if(section==='roles'){
     c.innerHTML=`<div class="sec mb3">Roles & Permissions</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">${[{role:'Admin',perms:['All modules','Edit pricing','Manage users','View all reports','Delete records']},{role:'Manager',perms:['Vehicle entry','Service log','View reports','Manage staff attendance']},{role:'Staff / Cashier',perms:['Vehicle entry','Service log','POS checkout','View customers']}].map(r=>`<div class="card"><div style="font-size:14px;font-weight:800;margin-bottom:10px">${r.role}</div>${r.perms.map(p=>`<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--line)">✓ ${p}</div>`).join('')}</div>`).join('')}</div>`;
   } else if(section==='users'){
@@ -3713,7 +3713,7 @@ function renderAdm(){
         <td>
           <div class="row g6">
             <button class="btn bs bsm" onclick="openCamModal(${cam.id})">Edit</button>
-            <button class="btn ${cam.enabled?'br2':'bg2'} bsm" onclick="toggleCam(${cam.id});renderAdm()">${cam.enabled?'Disable':'Enable'}</button>
+            <button class="btn ${cam.enabled?'br2':'bg2'} bsm" onclick="toggleCam('${cam.id}');renderAdm()">${cam.enabled?'Disable':'Enable'}</button>
             <button class="btn bpu bsm" onclick="pingCam(${cam.id})">Ping</button>
           </div>
         </td>
@@ -3902,7 +3902,7 @@ function openSvcM(id=null){
       <div class="fg"><label>Duration (min)</label><input type="number" id="sv-d" value="${s?.dur||''}"></div>
     </div>
     <div style="background:var(--blt);border-radius:var(--r);padding:9px 11px;font-size:11px;color:var(--blue);margin-bottom:12px">After saving, go to <strong>Service Pricing</strong> or click <strong>💰 Set Pricing</strong> to define per-category prices.</div>
-    <div style="display:flex;gap:8px;justify-content:flex-end">${s?`<button class="btn br2 bsm" onclick="delSvc(${s.id});closeModal()">Delete</button>`:''}<button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveSvc(${id||'null'})">${s?'Update':'Add'}</button></div>`);
+    <div style="display:flex;gap:8px;justify-content:flex-end">${s?`<button class="btn br2 bsm" onclick="delSvc('${s.id}');closeModal()">Delete</button>`:''}<button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveSvc(${id||'null'})">${s?'Update':'Add'}</button></div>`);
 }
 function saveSvc(id){
   const n=el('sv-n')?.value.trim(),p=parseFloat(el('sv-p')?.value),d=parseInt(el('sv-d')?.value);if(!n||!p){toast('Required','e');return;}
@@ -4207,9 +4207,9 @@ function buildCJRow(l){
         ${editHist?`<div><div style="font-size:11px;font-weight:800;color:var(--ink2);margin-bottom:8px">Edit History</div>${editHist}</div>`:''}
       </div>
       <div class="row g8 mt3" style="border-top:1px solid var(--line);padding-top:11px">
-        <button class="btn bp bsm" onclick="openSlReceipt(${l.id})">🖨 Receipt</button>
-        ${cust?.phone?`<button class="btn bpk bsm" onclick="sendSMS(${l.id})">📱 SMS</button>`:''}
-        ${!l.paid?`<button class="btn bg2 bsm" onclick="openSlPayment(${l.id})">💳 Payment</button>`:''}
+        <button class="btn bp bsm" onclick="openSlReceipt('${l.id}')">🖨 Receipt</button>
+        ${cust?.phone?`<button class="btn bpk bsm" onclick="sendSMS('${l.id}')">📱 SMS</button>`:''}
+        ${!l.paid?`<button class="btn bg2 bsm" onclick="openSlPayment('${l.id}')">💳 Payment</button>`:''}
         <button class="btn bcy bsm" onclick="gp('service-log',document.querySelector('.ni[onclick*=service]'));setTimeout(()=>{},200)">→ Service Log</button>
       </div>
     </div>
@@ -4353,7 +4353,7 @@ function buildCamFeed(cam){
         <div style="background:${cam.status==='online'?'#DC2626':'#64748B'};border-radius:20px;padding:3px 8px;font-size:9px;font-weight:800;color:#fff;display:flex;align-items:center;gap:4px"><span style="width:5px;height:5px;border-radius:50%;background:#fff;opacity:.8"></span>${cam.status==='online'?'LIVE':'OFFLINE'}</div>
       </div>
       <div style="position:absolute;bottom:8px;left:8px;right:8px;display:flex;gap:6px">
-        <button class="btn bp bsm" onclick="triggerAnprScan(${cam.id})" style="font-size:10px;padding:4px 10px">🔍 Scan</button>
+        <button class="btn bp bsm" onclick="triggerAnprScan('${cam.id}')" style="font-size:10px;padding:4px 10px">🔍 Scan</button>
         <button class="btn bs bsm" onclick="toast('Opening IP camera…','i')" style="font-size:10px;padding:4px 10px;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2)">⚙ Settings</button>
       </div>
     </div>
@@ -4452,8 +4452,8 @@ function renderCCTVCams(c){
     </div>
     <div class="row g8">
       <button class="btn bs bsm" onclick="openCamModal(${cam.id})">Edit</button>
-      <button class="btn ${cam.enabled?'br2':'bg2'} bsm" onclick="toggleCam(${cam.id})">${cam.enabled?'Disable':'Enable'}</button>
-      <button class="btn bpu bsm" onclick="triggerAnprScan(${cam.id})">🔍 Test Scan</button>
+      <button class="btn ${cam.enabled?'br2':'bg2'} bsm" onclick="toggleCam('${cam.id}')">${cam.enabled?'Disable':'Enable'}</button>
+      <button class="btn bpu bsm" onclick="triggerAnprScan('${cam.id}')">🔍 Test Scan</button>
     </div>
   </div>`).join('')}
   </div>`;
@@ -4696,7 +4696,7 @@ function openCamModal(id=null){
     <div class="g2" style="gap:8px"><div class="fg"><label>IP Address</label><input type="text" id="cm2-ip" value="${cam?.ip||''}" placeholder="192.168.1.x"></div><div class="fg"><label>Camera Type</label><select id="cm2-type"><option value="hikvision" ${cam?.type==='hikvision'?'selected':''}>Hikvision</option><option value="dahua" ${cam?.type==='dahua'?'selected':''}>Dahua</option><option value="axis" ${cam?.type==='axis'?'selected':''}>Axis</option><option value="openalpr" ${cam?.type==='openalpr'?'selected':''}>OpenALPR</option><option value="custom" ${cam?.type==='custom'?'selected':''}>Custom Webhook</option></select></div></div>
     <div class="fg"><label>API Key / Credentials</label><input type="text" id="cm2-key" placeholder="Optional" value="${cam?.apiKey||''}"></div>
     <div class="fg"><label>Status</label><select id="cm2-en"><option value="true" ${cam?.enabled!==false?'selected':''}>Enabled</option><option value="false" ${cam?.enabled===false?'selected':''}>Disabled</option></select></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end">${cam?`<button class="btn br2 bsm" onclick="S.cameras=S.cameras.filter(c=>c.id!==${id});closeModal();toast('Removed','ok');renderCCTV()">Remove</button>`:''}<button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveCam(${id||'null'})">${cam?'Update':'Add'}</button></div>`);
+    <div style="display:flex;gap:8px;justify-content:flex-end">${cam?`<button class="btn br2 bsm" onclick="S.cameras=S.cameras.filter(c=>c.id!==${id});closeModal();toast('Removed','ok');renderCCTV()">Remove</button>`:''}<button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveCam('${id||'null'}')">${cam?'Update':'Add'}</button></div>`);
 }
 
 function saveCam(id){
