@@ -2197,7 +2197,7 @@ function renderSL(){
   list.sort((a,b)=>new Date(b.enteredAt)-new Date(a.enteredAt));
   const washing=S.sl.filter(l=>['washing','interior','detailing'].includes(l.status)).length;
   const done=S.sl.filter(l=>l.status==='delivered'&&new Date(l.enteredAt).toDateString()===new Date().toDateString()).length;
-  const rev=S.sl.filter(l=>l.paid&&new Date(l.enteredAt).toDateString()===new Date().toDateString()).reduce((a,l)=>a+l.amount,0);
+  const rev=S.sl.filter(l=>l.paid&&new Date(l.enteredAt).toDateString()===new Date().toDateString()).reduce((a,l)=>a+(parseFloat(l.amount||l.total||0)),0);
   el('sl-kpis').innerHTML=
     `<div class="stat" style="border-left:3px solid var(--blue)"><div class="sl">Active Jobs</div><div class="sv" style="color:var(--blue)">${S.sl.filter(l=>l.status!=='delivered').length}</div><div class="ss">In progress</div></div>`+
     `<div class="stat" style="border-left:3px solid var(--purple)"><div class="sl">Now Washing</div><div class="sv" style="color:var(--purple)">${washing}</div><div class="ss">Being serviced</div></div>`+
@@ -2262,7 +2262,7 @@ function buildLogActions(l,isEditable){
     const nextStatus=nxt[l.status];
     if(nextStatus==='delivered'&&!l.paid){
       // Must pay before deliver — show payment prompt instead
-      b.push(`<button class="btn ba bsm" onclick="toast('⚠ Collect payment before delivering','e');openSlPayment(${l.id})">💳 Pay & Deliver</button>`);
+      b.push(`<button class="btn ba bsm" onclick="toast('⚠ Collect payment before delivering','e');openSlPayment('${l.id}')">💳 Pay & Deliver</button>`);
     } else {
       b.push(`<button class="btn bp bsm" onclick="slAdv('${l.id}','${nextStatus}')">${nlbl[nextStatus]}</button>`);
     }
@@ -2352,7 +2352,7 @@ function openSlEdit(id){
       <button class="btn br2 bsm" onclick="if(confirm('Cancel this job?')){closeModal();slDel(${id});}">🗑 Cancel Job</button>
       <div style="display:flex;gap:8px">
         <button class="btn bs" onclick="closeModal()">Close</button>
-        <button class="btn bp" onclick="saveSlEdit(${id})">💾 Save Changes</button>
+        <button class="btn bp" onclick="saveSlEdit('${id}')">💾 Save Changes</button>
       </div>
     </div>
     </div>`,600);
@@ -4138,8 +4138,10 @@ function buildCJRow(l){
   const cust=S.customers.find(c=>c.id===l.custId);
   const inv='INV-'+String(l.id).padStart(6,'0');
   const cat=l.vcat||'Sedan';
-  const sub=l.svcs.reduce((a,name)=>{const s=S.washSvcs.find(x=>x.name===name);return a+(s?gPrice(s,cat):0);},0);
-  const total=Math.max(0,sub-(l.disc||0)+(l.tax||0));
+  // Use stored amount from DB — don't recalculate (prices may differ by config)
+  const storedTotal = parseFloat(l.amount||l.total||0);
+  const sub = storedTotal + (l.disc||0) - (l.tax||0); // back-calculate sub
+  const total = storedTotal;
   const payLabel=l.payDetail&&l.payDetail.length
     ?l.payDetail.map(p=>{const m=CFG.payMethods.find(x=>x.id===p.method);return(m?.icon||'💳')+' '+(m?.label||p.method);}).join(' + ')
     :(l.pay||'—').toUpperCase();
@@ -4161,7 +4163,7 @@ function buildCJRow(l){
   </div>`).join('');
   const editHist=(l.editHistory||[]).slice().reverse().map(h=>`<div style="font-size:11px;padding:5px 0;border-bottom:1px solid var(--line);color:var(--ink2)"><strong>${h.by}</strong> — ${h.action}<span style="float:right;color:var(--ink3)">${ftm(h.at)}</span></div>`).join('');
   return`<div class="cj-row" id="cjr-${l.id}">
-    <div class="cj-hd" onclick="toggleCJ(${l.id})">
+    <div class="cj-hd" onclick="toggleCJ('${l.id}')">
       <div class="row aic g12">
         <div>
           <div style="font-size:15px;font-weight:900;letter-spacing:1px;color:var(--blue)">${l.plate}</div>
@@ -4224,14 +4226,14 @@ function toggleCJ(id){
 
 function exportCJExcel(){
   const rows=[['Job#','Invoice','Date','Plate','Customer','Phone','Category','Services','Staff','Amount','Payment','Status']];
-  S.sl.forEach(l=>{const c=S.customers.find(x=>x.id===l.custId);const cat=l.vcat||'Sedan';const total=Math.max(0,l.svcs.reduce((a,n)=>{const s=S.washSvcs.find(x=>x.name===n);return a+(s?gPrice(s,cat):0);},0)-(l.disc||0)+(l.tax||0));rows.push([String(l.id).padStart(6,'0'),'INV-'+String(l.id).padStart(6,'0'),fdt(l.enteredAt),l.plate,c?.name||'Walk-in',c?.phone||'',l.vcat||'',l.svcs.join('; '),l.staff||'',total,l.pay||'',l.status]);});
+  S.sl.forEach(l=>{const c=S.customers.find(x=>x.id===l.custId);const cat=l.vcat||'Sedan';const total=parseFloat(l.amount||l.total||0);rows.push([String(l.id).padStart(6,'0'),'INV-'+String(l.id).padStart(6,'0'),fdt(l.enteredAt),l.plate,c?.name||'Walk-in',c?.phone||'',l.vcat||'',l.svcs.join('; '),l.staff||'',total,l.pay||'',l.status]);});
   const csv=rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
   const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='wash-history-'+new Date().toISOString().slice(0,10)+'.csv';a.click();toast('Excel (CSV) exported ✓','ok');
 }
 
 function exportCJPDF(){
   const jobs=S.sl.slice(0,50);const now=new Date().toLocaleDateString();
-  const rows=jobs.map(l=>{const c=S.customers.find(x=>x.id===l.custId);const cat=l.vcat||'Sedan';const tot=Math.max(0,l.svcs.reduce((a,n)=>{const s=S.washSvcs.find(x=>x.name===n);return a+(s?gPrice(s,cat):0);},0)-(l.disc||0)+(l.tax||0));return`<tr style="border-bottom:1px solid #eee"><td>${String(l.id).padStart(6,'0')}</td><td>${fdt(l.enteredAt)}</td><td>${l.plate}</td><td>${c?.name||'Walk-in'}</td><td>${l.svcs.join(', ')}</td><td>${l.status}</td><td style="text-align:right">${frs(tot)}</td><td>${l.paid?'Paid':'Unpaid'}</td></tr>`;}).join('');
+  const rows=jobs.map(l=>{const c=S.customers.find(x=>x.id===l.custId);const cat=l.vcat||'Sedan';const tot=parseFloat(l.amount||l.total||0);return`<tr style="border-bottom:1px solid #eee"><td>${String(l.id).padStart(6,'0')}</td><td>${fdt(l.enteredAt)}</td><td>${l.plate}</td><td>${c?.name||'Walk-in'}</td><td>${l.svcs.join(', ')}</td><td>${l.status}</td><td style="text-align:right">${frs(tot)}</td><td>${l.paid?'Paid':'Unpaid'}</td></tr>`;}).join('');
   const w=window.open('','_blank','width=900,height=600');
   w.document.write(`<!DOCTYPE html><html><head><style>body{font-family:sans-serif;padding:20px;font-size:12px}h2{margin-bottom:16px}table{width:100%;border-collapse:collapse}th{background:#EFF6FF;padding:8px;text-align:left;font-size:11px}td{padding:7px 8px}@media print{button{display:none}}</style>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230d2680'/><text y='24' font-size='20' text-anchor='middle' x='16'>🚗</text></svg>" type="image/svg+xml">
@@ -5161,7 +5163,7 @@ function mapDbLog(l) {
     custName: l.customer_name, custPhone: l.customer_phone,
     svcs: svcs.map(s => s.service_name || s.name),
     svcDetails: svcs,
-    amount: parseFloat(l.amount), disc: parseFloat(l.discount || 0),
+    amount: parseFloat(l.amount||l.total||0), disc: parseFloat(l.discount || 0),
     tax: parseFloat(l.tax || 0), total: parseFloat(l.total || l.amount),
     status: l.status, pay: l.pay_method, payDetail: pmts,
     paid: l.paid, ptsEarned: l.pts_earned, ptsRedeemed: l.pts_redeemed,
