@@ -2005,7 +2005,9 @@ function renderSvcSel(){
   // Packages quick-select
   const pkgs=S.packages.filter(p=>{
     if(!p.active) return false;
-    const cats=Array.isArray(p.cats)?p.cats:(Array.isArray(p.categories)?p.categories:[]);
+    // Normalize cats/categories from DB
+    if(!Array.isArray(p.cats)){try{p.cats=JSON.parse(p.categories||p.cats||'[]');}catch(e){p.cats=[];}}
+    const cats=p.cats||[];
     return cats.length===0||cats.includes(cat);
   });
   el('pkg-quick').innerHTML=pkgs.length?`<div style="font-size:11px;font-weight:700;color:var(--ink2);margin-bottom:7px">📦 Packages</div><div style="display:flex;gap:8px;flex-wrap:wrap">${pkgs.map(p=>`<button class="btn bsm" style="background:var(--plt);color:var(--purple);border:1.5px solid #DDD6FE" onclick="applyPkg('${p.id}')">${p.name} — ${frs(p.price)}</button>`).join('')}</div>`:'';
@@ -2020,9 +2022,14 @@ function renderSvcSel(){
   }).join('');
   // Offers strip
   const activeOffers=S.offers.filter(o=>{
-    if(!o.active)return false;const now=new Date();
+    if(!o.active)return false;
+    const now=new Date();
     if(o.endDate&&new Date(o.endDate)<now)return false;
-    if(o.services.length>0&&!S.W.svcs.some(x=>o.services.includes(S.washSvcs.find(s=>s.id===x.id)?.name)))return false;
+    // Normalize services and categories — DB returns JSON strings
+    if(!Array.isArray(o.services)){try{o.services=JSON.parse(o.services||'[]');}catch(e){o.services=[];}}
+    if(!Array.isArray(o.categories)){try{o.categories=JSON.parse(o.categories||'[]');}catch(e){o.categories=[];}}
+    if(!Array.isArray(o.cats)) o.cats=o.categories||[];
+    if(o.services.length>0&&!S.W.svcs.some(x=>o.services.includes(S.washSvcs.find(s=>String(s.id)===String(x.id))?.name)))return false;
     if(o.cats.length>0&&!o.cats.includes(cat))return false;
     return true;
   });
@@ -5078,7 +5085,18 @@ async function sbBootstrapApp() {
       at: d.detected_at, duplicate: false
     }));
 
-    // Ensure S.txns exists (dashboard uses it for local calcs)
+    // Ensure offers/packages arrays are normalized after load
+    S.offers.forEach(o=>{
+      if(!Array.isArray(o.services)){try{o.services=JSON.parse(o.services||'[]');}catch(e){o.services=[];}}
+      if(!Array.isArray(o.categories)){try{o.categories=JSON.parse(o.categories||'[]');}catch(e){o.categories=[];}}
+      o.cats=o.categories;
+    });
+    S.packages.forEach(p=>{
+      if(!Array.isArray(p.svcs)){try{p.svcs=JSON.parse(p.services||'[]');}catch(e){p.svcs=[];}}
+      if(!Array.isArray(p.cats)){try{p.cats=JSON.parse(p.categories||'[]');}catch(e){p.cats=[];}}
+    });
+
+    // Ensure S.txns exists
     if(!S.txns) S.txns=[];
     // Load active service logs
     await sbRefreshServiceLogs();
