@@ -1514,6 +1514,36 @@ function sbDebounce(fn, delay = 350) {
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
 }
 
+
+// ════════════════════════════════════════════════════════
+// CLEAN DB LAYER — matches Suppliers pattern exactly
+// ════════════════════════════════════════════════════════
+async function dbInsert(table, data) {
+  const { data: saved, error } = await sbQ(table).insert(data).select().single();
+  if (error) { console.error('[DB INSERT]', table, error.message); throw error; }
+  return saved;
+}
+async function dbUpdate(table, id, data) {
+  const upd = {...data}; delete upd.id;
+  upd.updated_at = new Date().toISOString();
+  const { error } = await sbQ(table).update(upd).eq('id', id);
+  if (error) { console.error('[DB UPDATE]', table, error.message); throw error; }
+}
+async function dbSoftDelete(table, id) {
+  const { error } = await sbQ(table).update({active:false}).eq('id',id);
+  if (error) console.error('[DB SOFT DELETE]', table, error.message);
+}
+async function dbHardDelete(table, id) {
+  const { error } = await sbQ(table).delete().eq('id',id);
+  if (error) console.error('[DB HARD DELETE]', table, error.message);
+}
+function isUUID(id) { return id && typeof id === 'string' && id.length > 10 && id.includes('-'); }
+async function dbSaveRecord(table, data) {
+  const { id, ...payload } = data;
+  if (isUUID(id)) { await dbUpdate(table, id, payload); return {...payload, id}; }
+  return await dbInsert(table, payload);
+}
+
 // ── EXPORT ───────────────────────────────────────────────────
 window.QB = {
   // Auth
@@ -5809,110 +5839,81 @@ window.addEventListener('offline', () => {
 // WIRE ALL SAVE FUNCTIONS TO SUPABASE
 // ============================================================
 
-// ── Quick-add customer (Vehicle Entry) ───────────────────────
-const _origSaveQA = window.saveQA;
+// ── Quick-add customer (Vehicle Entry) ──────────────────────
 window.saveQA = async function() {
   const n = el('qa-n')?.value?.trim();
   const p = el('qa-p')?.value?.trim();
   if (!n || !p) { toast('Name and phone required', 'e'); return; }
   const plate = S.W?.plate || '';
-  const localId = 'local_' + Date.now();
+  const localId = 'tmp_' + Date.now();
   const c = { id: localId, name: n, phone: p, email: '', plates: plate?[plate]:[],
-               visits:0, totalSpent:0, lastVisit:new Date().toISOString(),
-               points:0, notes:'', loyaltyHistory:[] };
+    visits:0, totalSpent:0, lastVisit:new Date().toISOString(), points:0, notes:'', loyaltyHistory:[] };
   S.customers.push(c);
   S.W.custId = localId; S.W.cust = c;
   el('qa-wrap').style.display = 'none';
   if (el('plate-result')) el('plate-result').innerHTML =
     `<div style="background:var(--glt);border:1px solid var(--green);border-radius:var(--r2);padding:10px 14px;margin-top:10px">
       <div style="font-size:12px;font-weight:800;color:var(--green)">✓ Customer: ${n}</div>
-      <div style="font-size:11px;color:var(--ink3)">📞 ${p}</div>
-    </div>`;
+      <div style="font-size:11px;color:var(--ink3)">📞 ${p}</div></div>`;
   el('btn0').disabled = false;
   toast('Customer added ✓', 'ok');
-  // Direct DB insert — get real UUID immediately
+  // Save to DB — get real UUID
   try {
-    const { data: saved, error } = await sbQ('customers')
-      .insert({ name: n, phone: p, email: '' })
-      .select().single();
-    if (error) throw error;
-    if (saved) {
-      c.id = saved.id;
-      S.W.custId = saved.id;
-      S.W.cust.id = saved.id;
-      const idx = S.customers.findIndex(x => x.id === localId);
-      if (idx !== -1) S.customers[idx].id = saved.id;
-      if (plate) {
-        try {
-          await sbQ('customer_plates').insert({ customer_id: saved.id, plate: plate.toUpperCase() });
-        } catch(pe) {}
-      }
-      console.log('[QuickWash] ✅ Customer saved to DB:', saved.id);
+    const saved = await dbInsert('customers', { name: n, phone: p, email: '' });
+    c.id = saved.id;
+    S.W.custId = saved.id; S.W.cust.id = saved.id;
+    const idx = S.customers.findIndex(x => x.id === localId);
+    if (idx !== -1) S.customers[idx].id = saved.id;
+    if (plate) {
+      try { await dbInsert('customer_plates', { customer_id: saved.id, plate: plate.toUpperCase() }); } catch(pe){}
     }
-  } catch(e) {
-    console.warn('[QuickWash] Customer DB save failed:', e?.message);
-    toast('Customer saved locally — will sync when connected', 'w');
-  }
+  } catch(e) { console.warn('[DB] Customer save failed:', e?.message); }
 };
 
-// ── Service Log Edit ──────────────────────────────────────────
-const _origSaveSlEdit2 = window.saveSlEdit;
+// ── Service Log Edit ─────────────────────────────────────────
 window.saveSlEdit = async function(id) {
   const l = S.sl.find(x => x.id === id); if (!l) return;
+  const cat = l.vcatName || l.vcat || 'Sedan';
   const checked = [...document.querySelectorAll('input[name="sl-svc"]:checked')].map(x=>x.value);
   if (!checked.length) { toast('Select at least one service', 'e'); return; }
-  const cat = l.vcat || 'Sedan';
-  const sub = checked.reduce((a, name) => { const s = S.washSvcs.find(x=>x.name===name); return a+(s?gPrice(s,cat):0); }, 0);
-  const disc = parseFloat(el('se-disc')?.value) || 0;
-  const useTax = el('se-tax')?.value === '1';
-  const tax = useTax ? Math.round(Math.max(0,sub-disc)*CFG.gstRate/100) : 0;
-  const tot = Math.max(0, sub - disc) + tax;
-  const newStatus = el('se-status')?.value;
-  const changes = [];
-  if (JSON.stringify(l.svcs) !== JSON.stringify(checked)) changes.push('Services updated');
-  if (l.disc !== disc) changes.push(`Discount: ${frs(l.disc)}→${frs(disc)}`);
-  if (l.amount !== tot) changes.push(`Total: ${frs(l.amount)}→${frs(tot)}`);
-  if (newStatus && l.status !== newStatus) changes.push(`Status: ${l.status}→${newStatus}`);
-  // Local update
-  l.svcs = checked; l.disc = disc; l.tax = tax; l.amount = tot;
+  const sub = checked.reduce((a,name)=>{
+    const s=S.washSvcs.find(x=>x.name===name||x.service_name===name);
+    return a+(s?gPrice(s,cat):0);
+  },0);
+  const disc   = parseFloat(el('se-disc')?.value) || 0;
+  const useTax = el('se-tax')?.value==='1';
+  const tax    = useTax ? Math.round(Math.max(0,sub-disc)*CFG.gstRate/100) : 0;
+  const newSts = el('se-status')?.value;
+  const dbId   = isUUID(l.id) ? l.id : l._dbId;
+
+  l.svcs = checked; l.disc = disc; l.tax = tax; l.amount = Math.max(0,sub-disc)+tax;
   l.staff = el('se-staff')?.value || l.staff;
   l.estimatedMins = parseInt(el('se-est')?.value) || l.estimatedMins || 0;
   l.notes = el('se-notes')?.value || '';
-  if (newStatus && newStatus !== l.status) {
-    const tf = {received:'receivedAt',washing:'washingAt',interior:'interiorAt',
-                detailing:'detailingAt',qc:'qcAt',ready:'readyAt'}[newStatus];
-    l.status = newStatus; if(tf&&!l[tf]) l[tf] = new Date().toISOString();
+  if (newSts && newSts !== l.status) {
+    const tf={received:'receivedAt',washing:'washingAt',interior:'interiorAt',
+              detailing:'detailingAt',qc:'qcAt',ready:'readyAt'}[newSts];
+    l.status=newSts; if(tf&&!l[tf]) l[tf]=new Date().toISOString();
   }
-  if (changes.length) logEdit(l, changes.join('; '));
-  closeModal(); toast('Service log updated ✓', 'ok'); renderSL();
-  // DB save
-  const dbId = l._dbId || (typeof l.id==='string'&&l.id.length>10?l.id:null);
+  logEdit(l, 'Edited by ' + (S.user?.name||'Staff'));
+  closeModal(); toast('Service log updated ✓','ok'); renderSL();
+
   if (dbId) {
-    const svcDetails = checked.map(name => {
-      const svc = S.washSvcs.find(s => s.name === name || s.service_name === name);
-      return { log_id: dbId, service_id: svc?.id||null, service_name: name, price: svc?gPrice(svc,cat):0, qty: 1 };
-    });
-    // Direct DB update
-    if (dbId && typeof sbQ === 'function') {
-      sbQ('service_logs').update({
-        discount: disc, tax, notes: l.notes,
-        estimated_mins: l.estimatedMins, staff_name: l.staff, status: l.status,
-        updated_at: new Date().toISOString()
-      }).eq('id', dbId)
-        .then(({error}) => { if(error) console.warn('[DB] Log edit:', error.message); })
-        .catch(()=>{});
-      // Update services
-      if (svcDetails && svcDetails.length) {
-        sbQ('service_log_services').delete().eq('log_id', dbId)
-          .then(() => sbQ('service_log_services').insert(svcDetails))
-          .catch(()=>{});
-      }
-      // Add edit history
-      sbQ('service_log_edits').insert({
-        log_id: dbId, edited_by: S.user?.name||'Staff',
-        action: 'edited', edited_at: new Date().toISOString()
-      }).catch(()=>{});
-    }
+    try {
+      await dbUpdate('service_logs', dbId, {
+        discount:l.disc, tax:l.tax, notes:l.notes,
+        estimated_mins:l.estimatedMins, staff_name:l.staff, status:l.status
+      });
+      // Rewrite services
+      const svcs = checked.map(name=>{
+        const s=S.washSvcs.find(x=>x.name===name||x.service_name===name);
+        return { log_id:dbId, service_id: isUUID(s?.id)?s.id:null,
+          service_name: name, price: s?gPrice(s,cat):0, qty:1 };
+      });
+      await sbQ('service_log_services').delete().eq('log_id',dbId);
+      if (svcs.length) await sbQ('service_log_services').insert(svcs);
+      await dbInsert('service_log_edits',{log_id:dbId,edited_by:S.user?.name||'Staff',action:'edited',edited_at:new Date().toISOString()});
+    } catch(e) { console.warn('[DB] Log edit:', e?.message); }
   }
 };
 
@@ -5943,53 +5944,44 @@ window.saveSup = async function(id) {
 // ── Inventory save ────────────────────────────────────────────
 const _origSaveInv2 = window.saveInv;
 window.saveInv = async function(id) {
-  const name = el('ip-n')?.value?.trim();   // correct IDs: ip-*
+  const name = el('ip-n')?.value?.trim();
   if (!name) { toast('Product name required', 'e'); return; }
-  const data = {
-    name, sku: el('ip-sku')?.value||null, category: el('ip-cat')?.value||'accessories',
-    brand: el('ip-brand')?.value||'', selling_price: parseFloat(el('ip-sell')?.value)||0,
-    cost_price: parseFloat(el('ip-cost')?.value)||0, stock: parseInt(el('ip-stk')?.value)||0,
-    min_stock: parseInt(el('ip-min')?.value)||5, max_stock: parseInt(el('ip-max')?.value)||100,
-    unit: el('ip-unit')?.value||'pcs', supplier_id: parseInt(el('ip-sup')?.value)||null
+  const payload = {
+    name,
+    sku:           el('ip-sku')?.value   || null,
+    category:      el('ip-cat')?.value   || 'accessories',
+    brand:         el('ip-brand')?.value || '',
+    selling_price: parseFloat(el('ip-sell')?.value)  || 0,
+    cost_price:    parseFloat(el('ip-cost')?.value)  || 0,
+    stock:         parseInt(el('ip-stk')?.value)     || 0,
+    min_stock:     parseInt(el('ip-min')?.value)     || 5,
+    max_stock:     parseInt(el('ip-max')?.value)     || 100,
+    unit:          el('ip-unit')?.value  || 'pcs',
+    supplier_id:   el('ip-sup')?.value  || null,
+    active:        true
   };
-  if (id && id !== 'null') {
-    const p = S.products.find(x=>x.id===id);
-    if (p) Object.assign(p, { name:data.name, sku:data.sku, cat:data.category,
-      brand:data.brand, sellingPrice:data.selling_price, costPrice:data.cost_price,
-      stock:data.stock, minStock:data.min_stock, unit:data.unit });
-    data.id = id; toast('Product updated ✓','ok');
-  } else {
-    S.products.push({ id:Date.now(), name:data.name, sku:data.sku,
-      cat:data.category, brand:data.brand, supplierId:data.supplier_id,
-      sellingPrice:data.selling_price, costPrice:data.cost_price,
-      stock:data.stock, minStock:data.min_stock, unit:data.unit, barcode:'' });
-    toast('Product added ✓','ok');
-  }
-  closeModal(); renderInv();
-  // Direct DB save
-  if (typeof sbQ === 'function') {
-    const { id: pid, ...pdata } = data;
-    const isUUID = pid && typeof pid === 'string' && pid.length > 10;
-    const dbRow = { name: pdata.name, sku: pdata.sku||null, category: pdata.category||'accessories',
-      brand: pdata.brand||'', selling_price: pdata.selling_price||0, cost_price: pdata.cost_price||0,
-      stock: pdata.stock||0, min_stock: pdata.min_stock||5, max_stock: pdata.max_stock||100,
-      unit: pdata.unit||'pcs', supplier_id: pdata.supplier_id||null };
-    if (isUUID) {
-      sbQ('inventory_products').update({...dbRow, updated_at: new Date().toISOString()})
-        .eq('id', pid)
-        .then(({error}) => { if(error) console.warn('[DB] Product update:', error.message); })
-        .catch(e => console.warn('[DB] Product update:', e?.message));
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    const saved = await dbSaveRecord('inventory_products', isUUID(id) ? {...payload, id} : payload);
+    // Update local state
+    if (isUUID(id)) {
+      const p = S.products.find(x => x.id === id);
+      if (p) Object.assign(p, { name: saved.name, sku: saved.sku, cat: saved.category,
+        category: saved.category, brand: saved.brand, sellingPrice: saved.selling_price,
+        selling_price: saved.selling_price, costPrice: saved.cost_price,
+        cost_price: saved.cost_price, stock: saved.stock, minStock: saved.min_stock, unit: saved.unit });
     } else {
-      sbQ('inventory_products').insert(dbRow).select().single()
-        .then(({data: saved, error}) => {
-          if (error) { console.warn('[DB] Product insert:', error.message); return; }
-          if (saved) {
-            const p = S.products.find(x => x.name === pdata.name && !x._dbSaved);
-            if (p) { p.id = saved.id; p._dbSaved = true; }
-          }
-        }).catch(e => console.warn('[DB] Product insert:', e?.message));
+      S.products.push({ id: saved.id, name: saved.name, sku: saved.sku,
+        cat: saved.category, category: saved.category, brand: saved.brand,
+        sellingPrice: saved.selling_price, selling_price: saved.selling_price,
+        costPrice: saved.cost_price, cost_price: saved.cost_price,
+        stock: saved.stock, minStock: saved.min_stock, unit: saved.unit, active: true });
     }
-  }
+    closeModal(); renderInv();
+    toast((isUUID(id) ? 'Product updated' : 'Product added') + ' ✓', 'ok');
+  } catch(e) {
+    toast('Failed to save product: ' + (e.message||'DB error'), 'e');
+  } finally { if (btn) btn.disabled = false; }
 };
 
 // ── Purchase Order save ───────────────────────────────────────
@@ -6019,13 +6011,13 @@ window.savePO = async function() {
     'Create PO');
 };
 
-// ── Staff save ────────────────────────────────────────────────
+// ── Staff save ───────────────────────────────────────────────
 const _origSaveStaff2 = window.saveStaff;
 window.saveStaff = async function(id) {
-  const name = el('sf-n')?.value?.trim();   // ← correct IDs
+  const name  = el('sf-n')?.value?.trim();
   const phone = el('sf-p')?.value?.trim();
   if (!name || !phone) { toast('Name and phone required', 'e'); return; }
-  const data = {
+  const payload = {
     name, phone,
     role:       el('sf-r')?.value || 'Staff',
     basic:      parseFloat(el('sf-b')?.value) || 0,
@@ -6034,194 +6026,221 @@ window.saveStaff = async function(id) {
     join_date:  el('sf-j')?.value || null,
     active:     true
   };
-  if (id && id !== 'null') {
-    const s = S.staff.find(x => x.id === id);
-    if (s) Object.assign(s, { name:data.name, phone:data.phone, role:data.role,
-      basic:data.basic, hra:data.hra, allowances:data.allowances, joinDate:data.join_date });
-    data.id = id; toast('Updated ✓', 'ok');
-  } else {
-    S.staff.push({ id: S.staff.length + 1, name:data.name, phone:data.phone,
-      role:data.role, basic:data.basic, hra:data.hra, allowances:data.allowances,
-      joinDate:data.join_date, active:true });
-    toast('Staff added ✓', 'ok');
-  }
-  closeModal(); renderPayroll();
-  await dbSave('saveStaff', [data], (id&&id!=='null'?'Edit':'Add') + ' staff: ' + name);
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    const saved = await dbSaveRecord('staff', isUUID(id) ? {...payload, id} : payload);
+    if (isUUID(id)) {
+      const s = S.staff.find(x => x.id === id);
+      if (s) Object.assign(s, { name: saved.name, phone: saved.phone, role: saved.role,
+        basic: saved.basic, hra: saved.hra, allowances: saved.allowances, joinDate: saved.join_date });
+    } else {
+      S.staff.push({ id: saved.id, name: saved.name, phone: saved.phone, role: saved.role,
+        basic: saved.basic, hra: saved.hra, allowances: saved.allowances, joinDate: saved.join_date, active: true });
+    }
+    closeModal(); renderPayroll();
+    toast((isUUID(id) ? 'Staff updated' : 'Staff added') + ' ✓', 'ok');
+  } catch(e) {
+    toast('Failed to save staff: ' + (e.message||'DB error'), 'e');
+  } finally { if (btn) btn.disabled = false; }
 };
 
-// ── Attendance mark ───────────────────────────────────────────
+// ── Attendance mark ──────────────────────────────────────────
 const _origMarkAtt = window.markAtt;
 window.markAtt = async function(staffId, date, status, inTime, outTime) {
-  // Local already handled by original markAtt — call original first
   if (_origMarkAtt) _origMarkAtt(staffId, date, status, inTime, outTime);
-  await dbSave('markAttendance', [staffId, date, status, inTime||null, outTime||null],
-    'Attendance: '+date);
+  try {
+    // Try update first
+    const { data, error } = await sbQ('attendance')
+      .update({ status, in_time: inTime||null, out_time: outTime||null, updated_at: new Date().toISOString() })
+      .eq('staff_id', staffId).eq('date', date).select();
+    if (!error && data && data.length === 0) {
+      // No row existed — insert
+      await dbInsert('attendance', { staff_id: staffId, date, status, in_time: inTime||null, out_time: outTime||null });
+    }
+  } catch(e) { console.warn('[DB] Attendance:', e?.message); }
 };
 
-// ── Expenses ──────────────────────────────────────────────────
+// ── Expenses ─────────────────────────────────────────────────
 const _origSaveExpense = window.saveExpense;
 window.saveExpense = async function(id) {
-  const cat = el('exp-cat')?.value;
-  const amt = parseFloat(el('exp-amt')?.value) || 0;
-  const date = el('exp-date')?.value || new Date().toISOString().slice(0,10);
-  const notes = el('exp-notes')?.value || '';
-  if (!amt) { toast('Enter amount', 'e'); return; }
-  if (id) {
-    const e = S.exps?.find(x=>x.id===id);
-    if (e) Object.assign(e, { category:cat, amount:amt, date, notes });
-  } else {
-    S.exps = S.exps || [];
-    S.exps.push({ id:S.exps.length+1, category:cat, amount:amt, date, notes });
-  }
-  closeModal(); if(typeof rexp==='function') rexp(); toast('Expense saved ✓', 'ok');
-  await dbSave('saveExpense', [{ id:id||undefined, category:cat, amount:amt, date, notes }], 'Save expense');
+  const cat = el('ec-c')?.value;
+  const amt = parseFloat(el('ec-a')?.value);
+  if (!cat || !amt) { toast('Fill required fields', 'e'); return; }
+  const payload = {
+    category: cat,
+    amount:   amt,
+    date:     el('ec-d')?.value || new Date().toISOString().slice(0,10),
+    notes:    el('ec-n')?.value || ''
+  };
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    const saved = await dbSaveRecord('expenses', isUUID(id) ? {...payload, id} : payload);
+    if (isUUID(id)) {
+      const e = S.exps?.find(x => x.id === id);
+      if (e) Object.assign(e, { cat: saved.category, category: saved.category,
+        amt: saved.amount, amount: saved.amount, date: saved.date, notes: saved.notes });
+    } else {
+      if (!S.exps) S.exps = [];
+      S.exps.push({ id: saved.id, cat: saved.category, category: saved.category,
+        amt: saved.amount, amount: saved.amount, date: saved.date, notes: saved.notes });
+    }
+    closeModal(); rexp();
+    toast((isUUID(id) ? 'Expense updated' : 'Expense added') + ' ✓', 'ok');
+  } catch(e) {
+    toast('Failed to save expense: ' + (e.message||'DB error'), 'e');
+  } finally { if (btn) btn.disabled = false; }
 };
 
-// ── Delete Expense ────────────────────────────────────────────
 const _origDelExpense = window.delExp;
 window.delExp = async function(id) {
   if (!confirm('Delete this expense?')) return;
-  S.exps = S.exps?.filter(e=>e.id!==id) || [];
-  if (typeof rexp==='function') rexp();
-  toast('Deleted ✓', 'ok');
-  await dbSave('deleteExpense', [id], 'Delete expense');
+  try {
+    await dbHardDelete('expenses', id);
+    S.exps = (S.exps||[]).filter(e => e.id !== id);
+    rexp();
+    toast('Expense deleted ✓', 'ok');
+  } catch(e) {
+    toast('Delete failed: ' + (e.message||'DB error'), 'e');
+  }
 };
 
-// ── Package save ──────────────────────────────────────────────
+// ── Supplier save ─────────────────────────────────────────────
+// ── Package save ─────────────────────────────────────────────
 const _origSavePkg2 = window.savePkg;
 window.savePkg = async function(id) {
-  const name = el('pkg-name')?.value?.trim();
+  const name = el('pk-n')?.value?.trim();
   if (!name) { toast('Package name required', 'e'); return; }
-  const svcs = [...document.querySelectorAll('.pkg-svc:checked')].map(cb=>cb.value);
-  const data = { name, description: el('pkg-desc')?.value||'',
-                 price: parseFloat(el('pkg-price')?.value)||0,
-                 discount: parseFloat(el('pkg-disc')?.value)||0,
-                 validity: parseInt(el('pkg-validity')?.value)||30,
-                 active: el('pkg-active')?.checked !== false,
-                 services: svcs, categories: [] };
-  if (id) {
-    const p = S.packages.find(x=>x.id===id);
-    if (p) Object.assign(p, { name:data.name, desc:data.description, price:data.price,
-      discount:data.discount, validity:data.validity, active:data.active, services:svcs });
-    data.id = id;
-  } else {
-    S.packages.push({ id:S.packages.length+1, name:data.name, desc:data.description,
-      price:data.price, discount:data.discount, validity:data.validity, active:data.active, services:svcs, categories:[] });
-  }
-  closeModal(); renderPkg(); toast('Package saved ✓', 'ok');
-  // Direct DB save
-  if (typeof sbQ === 'function') {
-    const { id: pid, ...pdata } = data;
-    const isUUID = pid && typeof pid === 'string' && pid.length > 10;
-    const dbRow = { name: pdata.name, description: pdata.description||'',
-      price: pdata.price||0, discount: pdata.discount||0, validity: pdata.validity||30,
-      active: pdata.active !== false,
-      services: JSON.stringify(pdata.services||[]),
-      categories: JSON.stringify(pdata.categories||[]) };
-    if (isUUID) {
-      sbQ('packages').update(dbRow).eq('id', pid)
-        .then(({error}) => { if(error) console.warn('[DB] Pkg update:', error.message); })
-        .catch(e => console.warn('[DB] Pkg update:', e?.message));
+  const svcs = [...document.querySelectorAll('input[name="pkg-svc"]:checked')].map(cb=>cb.value);
+  const cats = [...document.querySelectorAll('input[name="pkg-cat"]:checked')].map(cb=>cb.value);
+  const payload = {
+    name,
+    description: el('pk-d')?.value || '',
+    price:       parseFloat(el('pk-p')?.value)    || 0,
+    discount:    parseFloat(el('pk-disc')?.value) || 0,
+    validity:    parseInt(el('pk-v')?.value)      || 30,
+    active:      el('pk-act')?.value === 'true',
+    services:    JSON.stringify(svcs),
+    categories:  JSON.stringify(cats)
+  };
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    const saved = await dbSaveRecord('packages', isUUID(id) ? {...payload, id} : payload);
+    if (isUUID(id)) {
+      const p = S.packages.find(x => x.id === id);
+      if (p) Object.assign(p, { name: saved.name, description: saved.description,
+        price: saved.price, discount: saved.discount, validity: saved.validity,
+        active: saved.active, svcs, cats,
+        services: JSON.stringify(svcs), categories: JSON.stringify(cats) });
     } else {
-      sbQ('packages').insert(dbRow).select().single()
-        .then(({data: saved, error}) => {
-          if (error) { console.warn('[DB] Pkg insert:', error.message); return; }
-          if (saved) {
-            const p = S.packages.find(x => x.name === pdata.name && !x._dbSaved);
-            if (p) { p.id = saved.id; p._dbSaved = true; }
-          }
-        }).catch(e => console.warn('[DB] Pkg insert:', e?.message));
+      S.packages.push({ id: saved.id, name: saved.name, description: saved.description,
+        price: saved.price, discount: saved.discount, validity: saved.validity,
+        active: saved.active, svcs, cats });
     }
-  }
+    closeModal(); renderPkg();
+    toast((isUUID(id) ? 'Package updated' : 'Package created') + ' ✓', 'ok');
+  } catch(e) {
+    toast('Failed to save package: ' + (e.message||'DB error'), 'e');
+  } finally { if (btn) btn.disabled = false; }
 };
 
-// ── Offer save ────────────────────────────────────────────────
+// ── Offer save ──────────────────────────────────────────────
 const _origSaveOffer2 = window.saveOffer;
 window.saveOffer = async function(id) {
-  const name = el('of-n')?.value?.trim();  // correct IDs: of-*
+  const name = el('of-n')?.value?.trim();
   if (!name) { toast('Offer name required', 'e'); return; }
-  const data = { name, type: el('of-t')?.value||'percentage',
-                 value: parseFloat(el('of-v')?.value)||0,
-                 start_date: el('of-sd')?.value||null, end_date: el('of-ed')?.value||null,
-                 coupon: el('of-c')?.value?.trim()||null,
-                 usage_limit: parseInt(el('of-ul')?.value)||0,
-                 active: el('of-act')?.value==='true', services:[], categories:[] };
-  if (id && id !== 'null') {
-    const o = S.offers.find(x=>x.id===id);
-    if (o) Object.assign(o, { name:data.name, type:data.type, value:data.value,
-      startDate:data.start_date, endDate:data.end_date, coupon:data.coupon, active:data.active });
-    data.id = id; toast('Offer updated ✓','ok');
-  } else {
-    S.offers.push({ id:Date.now(), name:data.name, type:data.type, value:data.value,
-      startDate:data.start_date, endDate:data.end_date, coupon:data.coupon,
-      usageLimit:data.usage_limit, usedCount:0, active:data.active, services:[], categories:[] });
-    toast('Offer created ✓','ok');
-  }
-  closeModal(); renderOffers();
-  // Direct DB save
-  if (typeof sbQ === 'function') {
-    const { id: oid, ...odata } = data;
-    const isUUID = oid && typeof oid === 'string' && oid.length > 10;
-    const dbRow = { name: odata.name, type: odata.type||'percentage', value: odata.value||0,
-      start_date: odata.start_date||null, end_date: odata.end_date||null,
-      coupon: odata.coupon||null, usage_limit: odata.usage_limit||0,
-      active: odata.active !== false, services: '[]', categories: '[]' };
-    if (isUUID) {
-      sbQ('offers').update(dbRow).eq('id', oid)
-        .then(({error}) => { if(error) console.warn('[DB] Offer update:', error.message); })
-        .catch(e => console.warn('[DB] Offer update:', e?.message));
+  const payload = {
+    name,
+    type:        el('of-t')?.value  || 'percentage',
+    value:       parseFloat(el('of-v')?.value)  || 0,
+    start_date:  el('of-sd')?.value || null,
+    end_date:    el('of-ed')?.value || null,
+    coupon:      el('of-c')?.value?.trim() || null,
+    usage_limit: parseInt(el('of-ul')?.value) || 0,
+    active:      el('of-act')?.value === 'true',
+    services:    '[]',
+    categories:  '[]'
+  };
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    const saved = await dbSaveRecord('offers', isUUID(id) ? {...payload, id} : payload);
+    if (isUUID(id)) {
+      const o = S.offers.find(x => x.id === id);
+      if (o) Object.assign(o, { name: saved.name, type: saved.type, value: saved.value,
+        startDate: saved.start_date, endDate: saved.end_date, coupon: saved.coupon, active: saved.active });
     } else {
-      sbQ('offers').insert(dbRow).select().single()
-        .then(({data: saved, error}) => {
-          if (error) { console.warn('[DB] Offer insert:', error.message); return; }
-          if (saved) {
-            const o = S.offers.find(x => x.name === odata.name && !x._dbSaved);
-            if (o) { o.id = saved.id; o._dbSaved = true; }
-          }
-        }).catch(e => console.warn('[DB] Offer insert:', e?.message));
+      S.offers.push({ id: saved.id, name: saved.name, type: saved.type, value: saved.value,
+        startDate: saved.start_date, endDate: saved.end_date, coupon: saved.coupon,
+        usageLimit: saved.usage_limit, usedCount: 0, active: saved.active, services: [], categories: [] });
     }
-  }
+    closeModal(); renderOffers();
+    toast((isUUID(id) ? 'Offer updated' : 'Offer created') + ' ✓', 'ok');
+  } catch(e) {
+    toast('Failed to save offer: ' + (e.message||'DB error'), 'e');
+  } finally { if (btn) btn.disabled = false; }
 };
 
-// ── Camera save ───────────────────────────────────────────────
+// ── Camera save ─────────────────────────────────────────────
 const _origSaveCam2 = window.saveCam;
 window.saveCam = async function(id) {
   const name = el('cam-name')?.value?.trim();
   if (!name) { toast('Camera name required', 'e'); return; }
-  const data = { name, location: el('cam-loc')?.value||'', ip: el('cam-ip')?.value||'',
-                 type: el('cam-type')?.value||'custom', apiKey: el('cam-key')?.value||'',
-                 enabled: el('cam-enabled')?.checked !== false };
-  if (id) {
-    const c = S.cameras.find(x=>x.id===id);
-    if (c) Object.assign(c, data);
-    data.id = id;
-  } else {
-    S.cameras.push({ id: S.cameras.length+1, ...data, status:'offline', lastPing:null });
-  }
-  closeModal(); renderAdm(); toast('Camera saved ✓', 'ok');
-  await dbSave('saveCamera', [data], (id?'Edit':'Add')+' camera: '+name);
+  const payload = {
+    name,
+    location: el('cam-loc')?.value   || '',
+    ip:       el('cam-ip')?.value    || '',
+    type:     el('cam-type')?.value  || 'custom',
+    api_key:  el('cam-key')?.value   || '',
+    enabled:  el('cam-enabled')?.checked !== false,
+    status:   'offline'
+  };
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    const saved = await dbSaveRecord('cctv_cameras', isUUID(id) ? {...payload, id} : payload);
+    if (isUUID(id)) {
+      const c = S.cameras.find(x => x.id === id);
+      if (c) Object.assign(c, { name: saved.name, location: saved.location, ip: saved.ip,
+        type: saved.type, apiKey: saved.api_key, enabled: saved.enabled });
+    } else {
+      S.cameras.push({ id: saved.id, name: saved.name, location: saved.location,
+        ip: saved.ip, type: saved.type, apiKey: saved.api_key, enabled: saved.enabled, status: 'offline', lastPing: null });
+    }
+    closeModal(); renderAdm();
+    toast((isUUID(id) ? 'Camera updated' : 'Camera added') + ' ✓', 'ok');
+  } catch(e) {
+    toast('Failed to save camera: ' + (e.message||'DB error'), 'e');
+  } finally { if (btn) btn.disabled = false; }
 };
 
-// ── Service (wash service) save ───────────────────────────────
+// ── Service (wash service) save ──────────────────────────────
 const _origSaveSvc2 = window.saveSvc;
 window.saveSvc = async function(id) {
   const name = el('svc-name')?.value?.trim();
   if (!name) { toast('Service name required', 'e'); return; }
-  const data = { name, category: el('svc-cat')?.value||'basic',
-                 base_price: parseFloat(el('svc-price')?.value)||0,
-                 duration_min: parseInt(el('svc-dur')?.value)||30 };
-  if (id) {
-    const s = S.washSvcs.find(x=>x.id===id);
-    if (s) Object.assign(s, { name:data.name, cat:data.category,
-      basePrice:data.base_price, dur:data.duration_min });
-    data.id = id;
-  } else {
-    const newId = S.washSvcs.length + 1;
-    S.washSvcs.push({ id:newId, name:data.name, cat:data.category,
-      basePrice:data.base_price, dur:data.duration_min, prices:{} });
-  }
-  closeModal(); renderAdm(); toast('Service saved ✓', 'ok');
-  await dbSave('saveService', [data], (id?'Edit':'Add')+' service: '+name);
+  const payload = {
+    name,
+    category:     el('svc-cat')?.value   || 'basic',
+    base_price:   parseFloat(el('svc-price')?.value) || 0,
+    duration_min: parseInt(el('svc-dur')?.value)     || 30,
+    active:       true
+  };
+  const btn = event?.target; if (btn) btn.disabled = true;
+  try {
+    const saved = await dbSaveRecord('wash_services', isUUID(id) ? {...payload, id} : payload);
+    if (isUUID(id)) {
+      const s = S.washSvcs.find(x => x.id === id);
+      if (s) Object.assign(s, { name: saved.name, cat: saved.category, category: saved.category,
+        basePrice: saved.base_price, base_price: saved.base_price,
+        dur: saved.duration_min, duration_min: saved.duration_min });
+    } else {
+      S.washSvcs.push({ id: saved.id, name: saved.name, cat: saved.category, category: saved.category,
+        basePrice: saved.base_price, base_price: saved.base_price,
+        dur: saved.duration_min, duration_min: saved.duration_min, prices: {} });
+    }
+    closeModal(); renderAdm();
+    toast((isUUID(id) ? 'Service updated' : 'Service added') + ' ✓', 'ok');
+  } catch(e) {
+    toast('Failed to save service: ' + (e.message||'DB error'), 'e');
+  } finally { if (btn) btn.disabled = false; }
 };
 
 // ── Service pricing matrix save ───────────────────────────────
