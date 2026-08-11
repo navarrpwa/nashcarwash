@@ -6409,16 +6409,18 @@ window.saveOffer = async function(id) {
 // ── Camera save ─────────────────────────────────────────────
 const _origSaveCam2 = window.saveCam;
 window.saveCam = async function(id) {
-  const name = el('cam-name')?.value?.trim();
+  const name = el('cm2-n')?.value?.trim();
   if (!name) { toast('Camera name required', 'e'); return; }
   const payload = {
     name,
-    location: el('cam-loc')?.value   || '',
-    ip:       el('cam-ip')?.value    || '',
-    type:     el('cam-type')?.value  || 'custom',
-    api_key:  el('cam-key')?.value   || '',
-    enabled:  el('cam-enabled')?.checked !== false,
-    status:   'offline'
+    location: el('cm2-loc')?.value  || '',
+    ip:       el('cm2-ip')?.value   || '',
+    type:     el('cm2-type')?.value || 'custom',
+    api_key:  el('cm2-key')?.value  || '',
+    apiKey:   el('cm2-key')?.value  || '',
+    enabled:  el('cm2-en')?.value !== 'false',  // correct ID: cm2-en
+    status:   'offline',
+    lastPing: null
   };
   const btn = event?.target; if (btn) btn.disabled = true;
   try {
@@ -6426,15 +6428,23 @@ window.saveCam = async function(id) {
     if (isUUID(id)) {
       const c = S.cameras.find(x => x.id === id);
       if (c) Object.assign(c, { name: saved.name, location: saved.location, ip: saved.ip,
-        type: saved.type, apiKey: saved.api_key, enabled: saved.enabled });
+        type: saved.type, apiKey: saved.api_key||saved.apiKey,
+        api_key: saved.api_key, enabled: saved.enabled });
     } else {
       S.cameras.push({ id: saved.id, name: saved.name, location: saved.location,
-        ip: saved.ip, type: saved.type, apiKey: saved.api_key, enabled: saved.enabled, status: 'offline', lastPing: null });
+        ip: saved.ip, type: saved.type, apiKey: saved.api_key||payload.apiKey,
+        api_key: saved.api_key, enabled: saved.enabled, status: 'offline', lastPing: null });
     }
-    closeModal(); renderAdm();
+    closeModal(); renderCCTV();
     toast((isUUID(id) ? 'Camera updated' : 'Camera added') + ' ✓', 'ok');
   } catch(e) {
     toast('Failed to save camera: ' + (e.message||'DB error'), 'e');
+    // Fallback: save locally even if DB fails
+    if (!isUUID(id)) {
+      S.cameras.push({id:Date.now(),...payload});
+      closeModal(); renderCCTV();
+      toast('Camera added locally ✓', 'w');
+    }
   } finally { if (btn) btn.disabled = false; }
 };
 
