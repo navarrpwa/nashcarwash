@@ -3711,9 +3711,9 @@ function renderAdm(){
         <td style="font-size:11px;color:var(--ink3)">${cam.lastPing?ftm(cam.lastPing):'Never'}</td>
         <td>
           <div class="row g6">
-            <button class="btn bs bsm" onclick="openCamModal(${cam.id})">Edit</button>
+            <button class="btn bs bsm" onclick="openCamModal('${cam.id}')">Edit</button>
             <button class="btn ${cam.enabled?'br2':'bg2'} bsm" onclick="toggleCam('${cam.id}');renderAdm()">${cam.enabled?'Disable':'Enable'}</button>
-            <button class="btn bpu bsm" onclick="pingCam(${cam.id})">Ping</button>
+            <button class="btn bpu bsm" onclick="pingCam('${cam.id}')">Ping</button>
           </div>
         </td>
       </tr>`).join('');
@@ -4452,7 +4452,7 @@ function renderCCTVCams(c){
       <div><div style="color:var(--ink3);font-size:9px;margin-bottom:2px">LAST PING</div><div style="font-weight:700">${cam.lastPing?ftm(cam.lastPing):'—'}</div></div>
     </div>
     <div class="row g8">
-      <button class="btn bs bsm" onclick="openCamModal(${cam.id})">Edit</button>
+      <button class="btn bs bsm" onclick="openCamModal('${cam.id}')">Edit</button>
       <button class="btn ${cam.enabled?'br2':'bg2'} bsm" onclick="toggleCam('${cam.id}')">${cam.enabled?'Disable':'Enable'}</button>
       <button class="btn bpu bsm" onclick="triggerAnprScan('${cam.id}')">🔍 Test Scan</button>
     </div>
@@ -4496,9 +4496,14 @@ function runScan(cam, silent=false){
   const provider = CFG.anprProvider || 'demo';
   if(provider !== 'demo') return; // Real provider handled by window.runScan override
 
+  // In demo mode: ONLY scan when user is on the CCTV page (not background auto)
+  // This prevents fake plates appearing randomly while staff work on other pages
+  const onCCTV = document.getElementById('pg-cctv')?.classList.contains('on');
+  if(silent && !onCCTV) return; // Block background auto-scans
+
   const knownPlates = S.customers.flatMap(c => c.plates||[]).filter(Boolean);
   if(!knownPlates.length){
-    // No customer plates yet — skip silently in demo mode
+    if(!silent) toast('📷 Demo: Add customers with plates first','w');
     return;
   }
 
@@ -4729,6 +4734,11 @@ const CCTV_IDLE_MS  = 5 * 60 * 1000;  // 5 minutes → pause
 const CCTV_IDLE_CHK = 30 * 1000;      // 30 s idle-check interval
 
 function startCCTVAutoScan(){
+  // Don't start auto-scan in demo mode — wait for manual Scan button click
+  if((CFG.anprProvider||'demo')==='demo'){
+    console.log('[CCTV] Demo mode — auto-scan disabled. Use Scan button on CCTV page.');
+    return;
+  }
   if(_cctvScanTimer) return;  // already ticking
   _cctvPaused = false;
   const iv = (CFG.cctvScanInterval || 3) * 1000;
@@ -4743,14 +4753,21 @@ function stopCCTVAutoScan(){
 }
 
 function _cctvTick(){
-  // Run regardless of which page is open — background scanning
   const cams = S.cameras.filter(c => c.enabled);
   if(!cams.length){ stopCCTVAutoScan(); return; }
-  // Don't fire toasts or auto-fill while staff is entering a vehicle
+  // Only auto-scan if ANPR provider is set to real mode
+  const provider = CFG.anprProvider || 'demo';
   const onVehicleEntry = document.getElementById('pg-vehicle-entry')?.classList.contains('on');
   const cam = cams[Math.floor(Math.random() * cams.length)];
-  runScan(cam, true); // always silent=true in background — avoids interrupting staff
-  // If on CCTV page, also do a non-silent scan for live feed
+  // In demo mode: only show detections if user is ON the CCTV page and clicks Scan manually
+  // Do NOT auto-generate fake detections in the background
+  if(provider === 'demo') {
+    // Only scan silently — no auto toasts, no auto detections unless on CCTV live page
+    if(el('live-det-feed') && !onVehicleEntry) runScan(cam, false);
+    return;
+  }
+  // Real provider: scan in background silently
+  runScan(cam, true);
   if(el('live-det-feed') && !onVehicleEntry) runScan(cam, false);
 }
 
