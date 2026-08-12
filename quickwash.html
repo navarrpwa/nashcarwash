@@ -2018,75 +2018,95 @@ function capPlate(){
 }
 
 async function runOCR(canvas){
+  el('cst').textContent='🔍 Reading plate…';
   try {
-    el('cst').textContent='🔍 Reading plate…';
 
-    // Crop to green box area (center strip)
+    // METHOD 1: Chrome/Android built-in Text Detection API (fastest, no library needed)
+    if('TextDetector' in window){
+      try {
+        const detector = new TextDetector();
+        const texts = await detector.detect(canvas);
+        // Find text matching Indian plate pattern
+        for(const t of texts){
+          const raw = t.rawValue.toUpperCase().replace(/[^A-Z0-9]/g,'');
+          const m = raw.match(/([A-Z]{2}[0-9]{1,2}[A-Z]{1,2}[0-9]{4})/);
+          if(m){
+            fillPlate(m[1]); el('ccap').disabled=false; return;
+          }
+        }
+        // Try combining all detected text
+        const allText = texts.map(t=>t.rawValue).join('').toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const m2 = allText.match(/([A-Z]{2}[0-9]{1,2}[A-Z]{1,2}[0-9]{4})/);
+        if(m2){ fillPlate(m2[1]); el('ccap').disabled=false; return; }
+      } catch(e){ console.warn('[OCR] TextDetector failed:',e.message); }
+    }
+
+    // METHOD 2: Tesseract.js with optimized settings
+    if(!window.Tesseract){
+      el('cst').textContent='Loading OCR (first time only)…';
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+        s.onload=res; s.onerror=rej;
+        document.head.appendChild(s);
+      });
+    }
+
+    // Preprocess: crop to green box, 3x upscale, sharpen
     const crop=document.createElement('canvas');
-    const cx=Math.floor(canvas.width*0.10);
-    const cy=Math.floor(canvas.height*0.28);
-    const cw=Math.floor(canvas.width*0.80);
-    const ch=Math.floor(canvas.height*0.44);
-    crop.width=cw*2; crop.height=ch*2; // 2x upscale for better OCR
+    const cx=Math.floor(canvas.width*0.08);
+    const cy=Math.floor(canvas.height*0.25);
+    const cw=Math.floor(canvas.width*0.84);
+    const ch=Math.floor(canvas.height*0.50);
+    crop.width=cw*3; crop.height=ch*3;
     const ctx=crop.getContext('2d');
-    // High contrast preprocessing for number plates
-    ctx.imageSmoothingEnabled=true;
-    ctx.drawImage(canvas,cx,cy,cw,ch,0,0,cw*2,ch*2);
-    // Apply threshold to make plate text clearer
+    ctx.drawImage(canvas,cx,cy,cw,ch,0,0,crop.width,crop.height);
+
+    // Adaptive threshold — works better than fixed 128 for different lighting
     const imgData=ctx.getImageData(0,0,crop.width,crop.height);
-    const d=imgData.data;
-    for(let i=0;i<d.length;i+=4){
-      const gray=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
-      const v=gray>128?255:0;
-      d[i]=d[i+1]=d[i+2]=v;
+    const px=imgData.data;
+    // Calculate mean brightness
+    let sum=0;
+    for(let i=0;i<px.length;i+=4) sum+=0.299*px[i]+0.587*px[i+1]+0.114*px[i+2];
+    const mean=sum/(px.length/4);
+    const thresh=mean*0.85; // slightly below mean
+    for(let i=0;i<px.length;i+=4){
+      const gray=0.299*px[i]+0.587*px[i+1]+0.114*px[i+2];
+      const v=gray>thresh?255:0;
+      px[i]=px[i+1]=px[i+2]=v; px[i+3]=255;
     }
     ctx.putImageData(imgData,0,0);
 
+    el('cst').textContent='🔍 Scanning…';
     const worker=await Tesseract.createWorker('eng');
     await worker.setParameters({
-      tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-      tessedit_pageseg_mode:'7',
-      tessedit_ocr_engine_mode:'1',
+      tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ',
+      tessedit_pageseg_mode:'6', // uniform block of text
     });
-
-    // Try cropped first
-    let {data:{text}}=await worker.recognize(crop);
-    let raw=text.replace(/[^A-Z0-9]/g,'').trim().toUpperCase();
-
-    // If crop didn't work, try full canvas
-    if(raw.length<4){
-      const full=document.createElement('canvas');
-      full.width=canvas.width; full.height=canvas.height;
-      const fctx=full.getContext('2d');
-      fctx.filter='contrast(2) grayscale(1)';
-      fctx.drawImage(canvas,0,0);
-      const r2=await worker.recognize(full);
-      raw=r2.data.text.replace(/[^A-Z0-9]/g,'').trim().toUpperCase();
-    }
-
+    const {data:{text}}=await worker.recognize(crop);
     await worker.terminate();
 
-    // Extract plate pattern: 2 letters + 2 digits + 1-2 letters + 4 digits (Indian format)
-    const plateMatch=raw.match(/([A-Z]{2}[0-9]{1,2}[A-Z]{1,2}[0-9]{4})/);
-    const result=plateMatch?plateMatch[1]:raw;
+    const raw=text.toUpperCase().replace(/[^A-Z0-9]/g,'');
+    const m=raw.match(/([A-Z]{2}[0-9]{1,2}[A-Z]{1,2}[0-9]{4})/);
+    if(m){ fillPlate(m[1]); }
+    else if(raw.length>=4){ fillPlate(raw.slice(0,12)); }
+    else { showManualInput('Could not read plate — type it above'); }
 
-    if(result.length>=4){
-      window._cp=result;
-      // Fill the manual input field AND show the OCR result box
-      const inp=document.getElementById('cap-plate-input');
-      if(inp) inp.value=result;
-      el('cpl').textContent=result;
-      el('cres').style.display='block';
-      el('cuse').style.display='inline-flex';
-      el('cst').textContent='✓ Auto-read: '+result+' — tap ✓ Use or edit above';
-    } else {
-      showManualInput('Could not auto-read — type plate manually');
-    }
-  } catch(e) {
+  } catch(e){
     console.warn('[OCR]',e?.message);
-    showManualInput('OCR unavailable — type plate manually');
+    showManualInput('Auto-read failed — type plate above');
   }
   el('ccap').disabled=false;
+}
+
+function fillPlate(plate){
+  window._cp = plate;
+  const inp=document.getElementById('cap-plate-input');
+  if(inp) inp.value=plate;
+  el('cpl').textContent=plate;
+  el('cres').style.display='block';
+  el('cuse').style.display='inline-flex';
+  el('cst').textContent='✓ Detected: '+plate+' — confirm or edit above';
 }
 
 function showManualInput(msg){
