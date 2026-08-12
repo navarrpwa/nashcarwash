@@ -27,7 +27,7 @@
   --r:8px;--r2:12px;--r3:16px;--r4:20px;
 }
 html,body{height:100%;overflow:hidden}
-body{background:var(--bg);color:var(--ink);font-size:14px;display:flex;height:100vh;overflow:hidden;position:fixed;width:100%;top:0;left:0}
+body{background:var(--bg);color:var(--ink);font-size:14px;display:flex;height:100vh;width:100vw;overflow:hidden;margin:0;padding:0}
 ::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
 
 /* LOGIN */
@@ -49,10 +49,10 @@ body{background:var(--bg);color:var(--ink);font-size:14px;display:flex;height:10
 .ldbtn:hover{border-color:#2563EB;color:#2563EB;background:#eff6ff}
 
 /* APP */
-#app{display:none;width:100%;height:100vh;overflow:hidden;flex-direction:row;position:absolute;top:0;left:0;right:0;bottom:0}
-#app.on{display:flex}
-#sb{position:relative;width:224px;min-width:224px;max-width:224px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;height:100vh;flex-shrink:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
-#main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+#app{display:none;width:100%;height:100%;overflow:hidden;flex-direction:row}
+#app.on{display:flex;width:100%;height:100%}
+#sb{width:224px;min-width:224px;max-width:224px;height:100%;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
+#main{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;overflow:hidden}
 
 /* SIDEBAR */
 .sb-top{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:9px;flex-shrink:0}
@@ -103,7 +103,7 @@ body{background:var(--bg);color:var(--ink);font-size:14px;display:flex;height:10
 .tb h1{font-size:15px;font-weight:800;letter-spacing:-.3px}
 .tb-r{display:flex;align-items:center;gap:8px}
 .tb-dt{font-size:11px;color:var(--ink3)}
-.ct{flex:1;overflow-y:auto;overflow-x:hidden;padding:18px;background:var(--bg);-webkit-overflow-scrolling:touch}
+.ct{flex:1;overflow-y:auto;overflow-x:hidden;padding:18px;background:var(--bg);-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 
 /* BUTTONS */
 .btn{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:var(--r);font-size:12px;font-weight:600;cursor:pointer;border:none;transition:all .15s;white-space:nowrap}
@@ -304,13 +304,20 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
 #sb-ov.on{display:block}
 @media(max-width:767px){
   #mb{display:flex!important}
-  #sb{position:fixed!important;left:-240px!important;top:0!important;bottom:0!important;
-      z-index:200!important;transition:left .25s ease!important;height:100%!important;
-      width:230px!important;min-width:230px!important;max-width:230px!important;
-      -webkit-overflow-scrolling:touch}
+  #sb{
+    position:fixed!important;
+    left:-240px!important;
+    top:0!important;
+    height:100%!important;
+    width:230px!important;
+    min-width:230px!important;
+    max-width:230px!important;
+    z-index:200!important;
+    transition:left .25s ease!important;
+  }
   #sb.open{left:0!important;box-shadow:4px 0 20px rgba(0,0,0,.25)!important}
   #sb-ov{display:block!important}
-  #main{width:100%!important;margin-left:0!important}
+  #main{width:100%!important}
   .tb{padding:0 12px!important}
   .tb h1{font-size:14px!important}
   .tb-dt{display:none!important}
@@ -318,14 +325,15 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
   .g5,.g4,.g3{grid-template-columns:1fr 1fr!important}
   .g2{grid-template-columns:1fr!important}
   .ov{align-items:flex-end!important;padding:0!important}
-  .modal{border-radius:12px 12px 0 0!important;max-height:90vh!important;
-         max-width:100%!important;width:100%!important;margin:0!important}
+  .modal{border-radius:12px 12px 0 0!important;max-height:90vh!important;width:100%!important;margin:0!important;max-width:100%!important}
   .vtype-grid{grid-template-columns:repeat(2,1fr)!important}
   .pm-grid{grid-template-columns:repeat(2,1fr)!important}
   .tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .row.aic.jb{flex-wrap:wrap;gap:8px}
 }
 @media(max-width:480px){
   .g4,.g3,.g5{grid-template-columns:1fr!important}
+  .vtype-grid{grid-template-columns:1fr 1fr!important}
   .tb h1{font-size:13px!important}
 }
 </style>
