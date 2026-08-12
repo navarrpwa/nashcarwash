@@ -4713,7 +4713,22 @@ function saveCam(id){
   closeModal();renderCCTV();
 }
 
-function toggleCam(id){const cam=S.cameras.find(c=>c.id===id);if(cam){cam.enabled=!cam.enabled;toast(cam.enabled?'Camera enabled':'Camera disabled','ok');renderCCTV();}}
+async function toggleCam(id){
+  const cam=S.cameras.find(c=>c.id===id||String(c.id)===String(id));
+  if(!cam) return;
+  cam.enabled=!cam.enabled;
+  cam.status=cam.enabled?'online':'offline';
+  toast(cam.enabled?'Camera enabled ✓':'Camera disabled ✓','ok');
+  renderCCTV();
+  // Save to DB
+  if(isUUID(id) && typeof sbQ==='function'){
+    const {error}=await sbQ('cctv_cameras')
+      .update({enabled:cam.enabled, status:cam.status, updated_at:new Date().toISOString()})
+      .eq('id',id);
+    if(error) console.warn('[DB] Camera toggle failed:',error.message);
+    else console.log('[QuickWash] ✅ Camera',cam.name,cam.enabled?'enabled':'disabled','in DB');
+  }
+}
 
 function simulateDetection(){const cam=S.cameras.find(c=>c.enabled);if(!cam){toast('No enabled cameras','e');return;}runScan(cam,false);}
 
