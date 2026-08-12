@@ -4370,7 +4370,7 @@ function buildDetActions(d){
   const btns=[];
   if(activeJob){btns.push(`<button class="btn ba bsm" style="font-size:10px" onclick="toast('⚠ ${d.plate} already has active job #${String(activeJob.id).padStart(6,0)}','w')">⚠ Active Job</button>`);}
   else{btns.push(`<button class="btn bp bsm" style="font-size:10px" onclick="detToVehicleEntry('${d.plate}')">+ New Entry</button>`);}
-  btns.push(`<button class="btn bs bsm" style="font-size:10px" onclick="ignoreDet(${d.id})">Ignore</button>`);
+  btns.push(`<button class="btn bs bsm" style="font-size:10px" onclick="ignoreDet('${d.id}')">Ignore</button>`);
   return btns.join('');
 }
 
@@ -6295,7 +6295,7 @@ window.savePO = async function() {
           product_id: null,
           qty:        item.qty,
           unit_cost:  item.unit_cost
-        }).catch(()=>{});
+        }).then(()=>{}).catch(()=>{});
       }
     }
 
