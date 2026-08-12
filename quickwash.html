@@ -1848,9 +1848,13 @@ function rdash(){
   if(!S.detections) S.detections=[];
   if(!S.staff) S.staff=[];
   const now=new Date(),ts=now.toDateString();
-  const td=S.txns.filter(t=>new Date(t.date).toDateString()===ts);
   const wk=new Date(now);wk.setDate(now.getDate()-7);
-  const wkT=S.txns.filter(t=>new Date(t.date)>=wk);
+  // Use S.sl as source of truth for revenue — more reliable than S.txns
+  const paidLogs=S.sl.filter(l=>l.paid||(l.status==='delivered'));
+  const td=paidLogs.filter(l=>new Date(l.enteredAt||l.deliveredAt||l.date).toDateString()===ts);
+  const wkT=paidLogs.filter(l=>new Date(l.enteredAt||l.deliveredAt||l.date)>=wk);
+  const todayRev=td.reduce((a,l)=>a+parseFloat(l.amount||l.total||0),0);
+  const weekRev=wkT.reduce((a,l)=>a+parseFloat(l.amount||l.total||0),0);
   const washing=S.sl.filter(l=>['washing','interior','detailing'].includes(l.status)).length;
   const lowStock=S.products.filter(p=>p.stock<=p.minStock).length;
   const todayDets=S.detections?S.detections.filter(d=>new Date(d.at).toDateString()===ts).length:0;
@@ -1858,8 +1862,8 @@ function rdash(){
   const waiting=S.sl.filter(l=>l.status==='waiting').length;
   const completedToday=S.sl.filter(l=>l.status==='delivered'&&new Date(l.enteredAt).toDateString()===ts).length;
   el('d-kpis').innerHTML=
-    kc("Today's Revenue",frs(td.reduce((a,t)=>a+t.tot,0)),td.length+' transactions','up')+
-    kc("Weekly Revenue",frs(wkT.reduce((a,t)=>a+t.tot,0)),wkT.length+' transactions','up')+
+    kc("Today's Revenue",frs(todayRev),td.length+' transactions','up')+
+    kc("Weekly Revenue",frs(weekRev),wkT.length+' transactions','up')+
     kc("Inside Wash",activeJobs+' cars','Active jobs','')+
     kc("Waiting",waiting+' cars','Queue',waiting>0?'dn':'')+
     kc("Completed",completedToday+' today','Delivered','')+
@@ -1867,7 +1871,7 @@ function rdash(){
     kc("Low Stock",lowStock+' items','Need reorder',lowStock>0?'dn':'')+
     kc("Delivered",S.sl.filter(l=>l.status==='delivered').length,'All time','up');
   const days=[],revs=[];
-  for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);days.push(d.toLocaleDateString('en',{weekday:'short'}));revs.push(S.txns.filter(t=>new Date(t.date).toDateString()===d.toDateString()).reduce((a,t)=>a+t.tot,0));}
+  for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);days.push(d.toLocaleDateString('en',{weekday:'short'}));revs.push(paidLogs.filter(l=>new Date(l.enteredAt||l.deliveredAt||l.date).toDateString()===d.toDateString()).reduce((a,l)=>a+parseFloat(l.amount||l.total||0),0));}
   mkch('c-rev',{type:'bar',data:{labels:days,datasets:[{data:revs,backgroundColor:'#BFDBFE',borderColor:'#2563EB',borderWidth:2,borderRadius:5}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{grid:{color:'#F1F5F9'},ticks:{callback:v=>'₹'+v.toLocaleString('en-IN')}}}}});
   const pm={cash:0,card:0,upi:0};S.txns.forEach(t=>pm[t.pay]=(pm[t.pay]||0)+1);
   mkch('c-pay',{type:'doughnut',data:{labels:['Cash','Card','UPI'],datasets:[{data:Object.values(pm),backgroundColor:['#BFDBFE','#A7F3D0','#DDD6FE'],borderColor:['#2563EB','#059669','#7C3AED'],borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{boxWidth:9,padding:8,font:{size:10}}}}}});
@@ -2113,42 +2117,7 @@ function completeEntry(){
   if(S.W.custId){const c=S.customers.find(x=>x.id===S.W.custId);if(c){c.visits++;c.totalSpent+=tot;c.lastVisit=now;c.points=Math.max(0,(c.points||0)-S.W.ptsRedeem)+pts;if(!c.plates.includes(S.W.plate))c.plates.push(S.W.plate);c.loyaltyHistory=c.loyaltyHistory||[];c.loyaltyHistory.push({date:now,action:'earned',pts,total:tot});if(S.W.ptsRedeem>0)c.loyaltyHistory.push({date:now,action:'redeemed',pts:S.W.ptsRedeem,total:tot});checkVisitRewards(c);}}
   showEntryReceipt(entry);resetWiz();
   toast('✓ Entry saved! Car added to wash queue','ok');
-
-  // ── Save to Supabase if connected ────────────────────────────
-  if(typeof QB !== 'undefined' && sbGetToken()) {
-    (async()=>{
-      try{
-        const vtRow = S._vtypes?.find(vt=>vt.code===S.W.vtype);
-        const vcRow = vtRow?.vehicle_categories?.find(vc=>vc.name===S.W.vcat);
-        const svcDetails = (S.W.svcs||[]).map(x=>{
-          const svc=S.washSvcs.find(s=>String(s.id)===String(x.id));
-          const price=svc?(svc.prices?.[S.W.vcat]||svc.basePrice):0;
-          return{service_id:svc?.id||null,service_name:svc?.name||x.id,price,qty:1};
-        });
-        const payload={
-          plate:entry.plate, model:entry.model||'',
-          vehicle_type_id:vtRow?.id||null, vehicle_cat_id:vcRow?.id||null,
-          customer_id:entry.custId||null,
-          amount:entry.amount, discount:entry.disc||0,
-          pay_method:entry.pay, paid:entry.paid,
-          pts_earned:pts, pts_redeemed:S.W.ptsRedeem||0,
-          estimated_mins:0, staff_name:entry.staff, notes:entry.notes||'',
-          services:svcDetails,
-          payment_details:entry.payDetail||[{method:entry.pay,amount:entry.amount}]
-        };
-        const result = await QB.createServiceEntry(payload);
-        // Update local entry with real DB id
-        entry._dbId = result.log_id;
-        entry.jobNumber = result.job_number;
-        entry.invoiceNo = result.invoice_no;
-        console.log('[QuickWash] ✅ Saved to Supabase:', result.job_number);
-        toast('☁ Synced to database ✓','ok');
-      }catch(err){
-        console.error('[QuickWash] ❌ Supabase save failed:', err.message);
-        toast('⚠ Not synced to DB: '+err.message,'e');
-      } finally { window._submitting=false; }
-    })();
-  } else { window._submitting=false; }
+  // DB save handled by window.completeEntry override above
 } // end completeEntry
 function checkVisitRewards(cust){
   CFG.visitRewards.filter(r=>r.active).forEach(r=>{if(cust.visits===r.visits){toast('🎁 '+cust.name+' earned: '+r.reward,'ok');}});
@@ -5217,75 +5186,131 @@ const _origCompleteEntry = window.completeEntry;
 window.completeEntry = async function() {
   if(window._submitting){toast('Please wait…','w');return;}
   window._submitting=true;
-  const btn = document.querySelector('#step-4-confirm');
-  if (btn) btn.disabled = true;
+  const btn = document.querySelector('#step-4-confirm') ||
+              document.querySelector('button[onclick*="completeEntry"]');
+  if(btn) btn.disabled=true;
 
-  QB.loading('Creating service entry…');
   try {
-    // Find DB IDs for vehicle type & category
-    const vtRow = S._vtypes?.find(vt => vt.code === S.W.vtype);
-    const vcRow = vtRow?.vehicle_categories?.find(vc => vc.name === S.W.vcat);
+    const vtRow = S._vtypes?.find(vt=>vt.code===S.W.vtype);
+    const vcRow = vtRow?.vehicle_categories?.find(vc=>vc.name===S.W.vcat);
 
-    const svcDetails = (S.W.svcs || []).map(x => {
-      const svc = S.washSvcs.find(s => s.id === x.id);
-      const price = svc ? (svc.prices?.[S.W.vcat] || svc.basePrice) : 0;
-      return { service_id: svc?.id || null, service_name: svc?.name || x.id, price, qty: 1 };
+    const svcDetails=(S.W.svcs||[]).map(x=>{
+      const svc=S.washSvcs.find(s=>String(s.id)===String(x.id));
+      const price=svc?gPrice(svc,S.W.vcat||'Sedan'):0;
+      return{service_id:isUUID(svc?.id)?svc.id:null,service_name:svc?.name||'',price,qty:1};
     });
 
-    const tot = svcDetails.reduce((a, s) => a + s.price, 0);
-    const disc = parseFloat(el('we-disc')?.value) || 0;
-    const pts  = CFG.loyaltyEnabled ? Math.floor((tot - disc) * (CFG.pointsPerRupee || 0.1)) : 0;
-    const ptsRedeem = parseInt(S.W.redeemPoints) || 0;
+    const sub   = svcDetails.reduce((a,s)=>a+s.price,0);
+    const disc  = parseFloat(S.W.disc)||0;
+    const tax   = S.W.applyGst ? Math.round(Math.max(0,sub-disc)*CFG.gstRate/100) : 0;
+    const tot   = Math.max(0,sub-disc)+tax;
+    const pts   = CFG.loyaltyEnabled ? Math.floor(tot*(CFG.pointsPerRupee||0.1)) : 0;
+    const ptsRedeem = parseInt(S.W.ptsRedeem)||0;
+    const now   = new Date().toISOString();
+    const plate = S.W.plate?.toUpperCase();
+    const model = ((el('wv-n')?.value||'')+(el('wv-b')?.value?' '+el('wv-b').value:'')).trim();
+    const payMethods = S.W.payMethods||['cash'];
+    const paid  = !payMethods.includes('credit');
 
-    const payload = {
-      plate: S.W.plate?.toUpperCase(),
-      model: ((el('wv-n')?.value || '') + (el('wv-b')?.value ? ' ' + el('wv-b').value : '')).trim(),
-      vehicle_type_id: vtRow?.id || null,
-      vehicle_cat_id: vcRow?.id || null,
-      customer_id: S.W.custId || null,
-      amount: tot,
-      discount: disc,
-      pay_method: S.W.payMethods?.[0] || 'cash',
-      paid: !S.W.payMethods?.includes('credit'),
-      pts_earned: pts,
-      pts_redeemed: ptsRedeem,
-      estimated_mins: svcDetails.reduce((a, s) => a + (S.washSvcs.find(w=>w.name===s.service_name)?.dur||30), 0),
-      staff_name: S.user?.name || '',
-      notes: el('we-notes')?.value || '',
-      services: svcDetails,
-      payment_details: S.W.payMethods?.map(m => ({
-        method: m, amount: S.W.splitAmounts?.[m] || (tot - disc)
-      })) || [{ method: 'cash', amount: tot - disc }]
+    // Build service log locally first
+    const localEntry={
+      id:'tmp_'+Date.now(), plate, model,
+      vtype:S.W.vtype, vcat:S.W.vcat, vcatName:S.W.vcat,
+      custId:S.W.custId, custName:S.customers.find(c=>c.id===S.W.custId)?.name||'Walk-in',
+      svcs:svcDetails.map(s=>s.service_name), svcDetails,
+      amount:tot, disc, tax, total:tot,
+      pay:payMethods.join('+'), payDetail:payMethods.map(m=>({method:m,amount:tot})),
+      paid, status:'waiting', enteredAt:now,
+      staff:S.user?.name||'', notes:'',
+      ptsEarned:pts, ptsRedeemed:ptsRedeem,
+      estimatedMins:0, editHistory:[{by:S.user?.name||'Staff',action:'Entry created',at:now}]
     };
 
-    const result = await QB.createServiceEntry(payload);
+    // Insert into Supabase directly
+    const {data:logRow, error:logErr} = await sbQ('service_logs').insert({
+      plate, model,
+      vehicle_type_id: vtRow?.id||null,
+      vehicle_cat_id:  vcRow?.id||null,
+      customer_id:     isUUID(S.W.custId)?S.W.custId:null,
+      amount: tot, discount: disc, tax,
+      status: 'waiting',
+      pay_method: payMethods[0]||'cash',
+      paid,
+      pts_earned: pts, pts_redeemed: ptsRedeem,
+      staff_name: S.user?.name||'',
+      notes: '',
+      entered_at: now
+    }).select().single();
+    if(logErr) throw logErr;
 
-    // Refresh local state
-    await sbRefreshServiceLogs();
+    // Use real DB id
+    localEntry.id     = logRow.id;
+    localEntry._dbId  = logRow.id;
+    localEntry.jobNumber = logRow.job_number||('JOB-'+logRow.id.slice(-6).toUpperCase());
+    localEntry.invoiceNo = logRow.invoice_no||('INV-'+logRow.id.slice(-6).toUpperCase());
 
-    // Update customer loyalty in local state
-    if (S.W.custId) {
-      const cust = S.customers.find(c => c.id === S.W.custId);
-      if (cust) { cust.points = Math.max(0, cust.points + pts - ptsRedeem); cust.visits++; }
+    // Insert service line items
+    if(svcDetails.length){
+      const items=svcDetails.map(s=>({
+        log_id:logRow.id,
+        service_id:s.service_id||null,
+        service_name:s.service_name,
+        price:s.price, qty:1
+      }));
+      await sbQ('service_log_services').insert(items);
     }
 
-    QB.doneLoading();
-    toast('✓ Job ' + result.job_number + ' created!', 'ok');
-
-    // Auto-SMS
-    if (CFG.sms?.enabled && CFG.sms?.autoSendOnComplete) {
-      const newLog = S.sl.find(l => l.id === result.log_id);
-      if (newLog) setTimeout(() => sendSMS(result.log_id, true), 1000);
+    // Insert payment details
+    if(paid&&payMethods.length){
+      const pmts=payMethods.map(m=>({
+        log_id:logRow.id, method:m,
+        amount:S.W.splits?.[m]||tot
+      }));
+      await sbQ('service_log_payments').insert(pmts).catch(()=>{});
     }
+
+    // Update customer loyalty + plate
+    if(isUUID(S.W.custId)){
+      const cust=S.customers.find(c=>c.id===S.W.custId);
+      if(cust){
+        cust.visits++; cust.totalSpent+=tot;
+        cust.points=Math.max(0,(cust.points||0)+pts-ptsRedeem);
+        cust.lastVisit=now;
+        if(!cust.plates?.includes(plate)) cust.plates?.push(plate);
+      }
+      // Update DB customer
+      sbQ('customers').update({
+        visits:(cust?.visits||1), total_spent:(cust?.totalSpent||tot),
+        points:Math.max(0,(cust?.points||0)), last_visit:now
+      }).eq('id',S.W.custId).catch(()=>{});
+      // Add plate (ignore duplicate)
+      sbQ('customer_plates').insert({customer_id:S.W.custId,plate})
+        .then(({error})=>{if(error&&error.code!=='23505')console.warn('[DB] Plate:',error.message);})
+        .catch(()=>{});
+    }
+
+    // Add to local service log
+    S.sl.unshift(localEntry);
+    S.txns=S.txns||[];
+    if(paid) S.txns.push({id:logRow.id,rcpt:localEntry.invoiceNo,type:'wash',
+      plate,svcs:localEntry.svcs,tot,pay:localEntry.pay,status:'completed',date:now,custId:S.W.custId});
+
+    // Show receipt and reset wizard
+    showEntryReceipt(localEntry);
+    resetWiz();
+    toast('✓ Job '+localEntry.jobNumber+' created!','ok');
+    console.log('[QuickWash] ✅ Entry saved to DB:',logRow.id);
 
     // Navigate to service log
-    gp('service-log');
-    initVE();
+    setTimeout(()=>gp('service-log'),800);
 
   } catch(err) {
-    QB.doneLoading();
-    QB.error(err, 'Failed to create service entry');
-    if (btn) btn.disabled = false;
+    console.error('[QuickWash] ❌ Entry save failed:',err);
+    toast('Failed to create entry: '+(err.message||'DB error'),'e');
+    if(btn) btn.disabled=false;
+  } finally {
+    window._submitting=false;
+    if(btn) btn.disabled=false;
   }
 };
 
