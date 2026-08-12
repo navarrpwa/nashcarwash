@@ -11,7 +11,7 @@
 <title>QuickWash Enterprise</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;font-family:'Plus Jakarta Sans',sans-serif}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;font-family:'Plus Jakarta Sans',sans-serif} body{overflow:hidden;height:100vh;width:100vw}
 :root{
   --bg:#F1F5F9;--white:#fff;--surf:#F8FAFC;
   --blue:#2563EB;--blt:#EFF6FF;--bdk:#1D4ED8;
@@ -2220,8 +2220,16 @@ function buildLogCard(l){
 }
 
 function calcLogSub(l){
-  const cat=l.vcat||'Sedan';
-  return l.svcs.reduce((a,name)=>{const s=S.washSvcs.find(x=>x.name===name);return a+(s?gPrice(s,cat):0);},0);
+  // Use stored amount first — DB logs have correct amounts
+  if(l.amount>0) return parseFloat(l.amount);
+  if(l.total>0) return parseFloat(l.total);
+  // Fallback: recalculate from services
+  const cat=l.vcat||l.vcatName||'Sedan';
+  if(!l.svcs||!l.svcs.length) return 0;
+  return l.svcs.reduce((a,name)=>{
+    const s=S.washSvcs.find(x=>x.name===name||x.service_name===name);
+    return a+(s?gPrice(s,cat):0);
+  },0);
 }
 
 function buildLogActions(l,isEditable){
@@ -2379,9 +2387,12 @@ function saveSlEdit(id){
 // ── Payment modal with full method selection ──
 function openSlPayment(id){
   const l=S.sl.find(x=>x.id===id);if(!l)return;
-  const cat=l.vcat||'Sedan';
-  const sub=calcLogSub(l);const disc=l.disc||0;const tax=l.tax||0;
-  const total=Math.max(0,sub-disc+tax);
+  const disc=l.disc||l.discount||0;
+  const tax=l.tax||0;
+  // Use stored amount — don't recalculate (services may not be in local washSvcs)
+  const storedAmt = parseFloat(l.amount||l.total||0);
+  const sub = storedAmt > 0 ? storedAmt + disc - tax : calcLogSub(l);
+  const total = storedAmt > 0 ? storedAmt : Math.max(0,sub-disc+tax);
   const activeMethods=CFG.payMethods.filter(m=>m.enabled);
   const methodBtns=activeMethods.map(m=>`
     <div class="pm-btn ${l.payDetail?.some(p=>p.method===m.id)?'sel':''}" id="pay-m-${m.id}" onclick="toggleSlPM('${m.id}')" style="padding:11px 8px">
@@ -2404,7 +2415,7 @@ function openSlPayment(id){
     <div class="fg" style="margin-bottom:10px"><label>Payment Notes</label><input type="text" id="pay-notes" placeholder="e.g. Card ending 1234…"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button class="btn bs" onclick="closeModal()">Cancel</button>
-      <button class="btn bp" onclick="saveSlPayment(${id},${total})">✓ Confirm Payment</button>
+      <button class="btn bp" onclick="saveSlPayment('${id}',${total})">✓ Confirm Payment</button>
     </div>`,560);
   window._slPayMethods=l.payDetail?.map(p=>p.method)||[];
   window._slPayTotal=total;
@@ -2754,7 +2765,7 @@ function poscheckout(){
     if(dbId && typeof sbQ==='function'){
       sbQ('inventory_products').select('stock').eq('id',dbId).single()
         .then(({data:p})=>{
-          if(p) sbQ('inventory_products').update({stock:Math.max(0,(p.stock||0)-item.qty),updated_at:new Date().toISOString()}).eq('id',dbId).catch(()=>{});
+          if(p) sbQ('inventory_products').update({stock:Math.max(0,(p.stock||0)-item.qty),updated_at:new Date().toISOString()}).eq('id',dbId).then(()=>{}).catch(()=>{});
         }).catch(()=>{});
     }
   });
@@ -2926,7 +2937,7 @@ function delProd(id){
   S.products=S.products.filter(p=>p.id!==id);
   closeModal();toast('Product deleted','ok');renderInv();
   if(typeof QB!=='undefined'&&sbGetToken()){
-    sbQ('inventory_products').update({active:false}).eq('id',id).catch(()=>{});
+    sbQ('inventory_products').update({active:false}).eq('id',id).then(()=>{}).catch(()=>{});
   }
 }
 function quickReorder(id){const p=S.products.find(x=>x.id===id);if(!p)return;const sup=S.suppliers.find(s=>s.id===p.supplierId);openPurOrder(p.id);}
@@ -3044,7 +3055,7 @@ function delSup(id){
   S.suppliers=S.suppliers.filter(s=>s.id!==id);
   toast('Supplier removed','ok');renderSup();
   if(typeof QB!=='undefined'&&sbGetToken()){
-    sbQ('suppliers').update({active:false}).eq('id',id).catch(()=>{});
+    sbQ('suppliers').update({active:false}).eq('id',id).then(()=>{}).catch(()=>{});
   }
 }
 // ══════════════════════════════════════════════════════════
@@ -3132,7 +3143,7 @@ function delStaff(id){
   S.staff=S.staff.filter(s=>s.id!==id);
   toast('Staff removed','ok');renderPayroll();
   if(typeof QB!=='undefined'&&sbGetToken()){
-    sbQ('staff').update({active:false}).eq('id',id).catch(()=>{});
+    sbQ('staff').update({active:false}).eq('id',id).then(()=>{}).catch(()=>{});
   }
 }
 function updAtt(sid,f,v){
@@ -3445,7 +3456,7 @@ function togglePkg(id){
   const p=S.packages.find(x=>x.id===id);if(!p)return;
   p.active=!p.active;toast(p.active?'Package enabled':'Package disabled','ok');renderPkg();
   if(typeof QB!=='undefined'&&sbGetToken()){
-    sbQ('packages').update({active:p.active}).eq('id',id).catch(()=>{});
+    sbQ('packages').update({active:p.active}).eq('id',id).then(()=>{}).catch(()=>{});
   }
 }
 function delPkg(id){
@@ -3453,7 +3464,7 @@ function delPkg(id){
   S.packages=S.packages.filter(p=>p.id!==id);
   toast('Package deleted','ok');renderPkg();
   if(typeof QB!=='undefined'&&sbGetToken()){
-    sbQ('packages').update({active:false}).eq('id',id).catch(()=>{});
+    sbQ('packages').update({active:false}).eq('id',id).then(()=>{}).catch(()=>{});
   }
 }
 
@@ -5145,7 +5156,13 @@ async function sbBootstrapApp() {
 // ── SERVICE LOGS ─────────────────────────────────────────────
 async function sbRefreshServiceLogs() {
   const { data } = await QB.loadServiceLogs({ limit: 200 });
-  S.sl = (data||[]).map(mapDbLog);
+  S.sl = (data||[]).map(l => {
+    const mapped = mapDbLog(l);
+    // Ensure amount is always a valid number from DB
+    mapped.amount = parseFloat(l.amount || l.total || 0);
+    mapped.total = mapped.amount;
+    return mapped;
+  });
   // Populate S.txns from service logs for dashboard local calculations
   S.txns = S.sl.filter(l=>l.paid).map(l=>({
     id: l.id, rcpt: l.invoiceNo||l.jobNumber, type:'wash',
@@ -5174,7 +5191,7 @@ function mapDbLog(l) {
     custName: l.customer_name, custPhone: l.customer_phone,
     svcs: svcs.map(s => s.service_name || s.name),
     svcDetails: svcs,
-    amount: parseFloat(l.amount||l.total||0), disc: parseFloat(l.discount || 0),
+    amount: parseFloat(l.amount||l.total||l.subtotal||0), disc: parseFloat(l.discount || 0),
     tax: parseFloat(l.tax || 0), total: parseFloat(l.total || l.amount),
     status: l.status, pay: l.pay_method, payDetail: pmts,
     paid: l.paid, ptsEarned: l.pts_earned, ptsRedeemed: l.pts_redeemed,
@@ -5277,7 +5294,7 @@ window.completeEntry = async function() {
         log_id:logRow.id, method:m,
         amount:S.W.splits?.[m]||tot
       }));
-      await sbQ('service_log_payments').insert(pmts).catch(()=>{});
+      try { await sbQ('service_log_payments').insert(pmts); } catch(pe){}
     }
 
     // Update customer loyalty + plate
@@ -5293,11 +5310,9 @@ window.completeEntry = async function() {
       sbQ('customers').update({
         visits:(cust?.visits||1), total_spent:(cust?.totalSpent||tot),
         points:Math.max(0,(cust?.points||0)), last_visit:now
-      }).eq('id',S.W.custId).catch(()=>{});
+      }).eq('id',S.W.custId).then(()=>{}).catch(()=>{});
       // Add plate (ignore duplicate)
-      sbQ('customer_plates').insert({customer_id:S.W.custId,plate})
-        .then(({error})=>{if(error&&error.code!=='23505')console.warn('[DB] Plate:',error.message);})
-        .catch(()=>{});
+      try { await sbQ('customer_plates').insert({customer_id:S.W.custId,plate}); } catch(pe){}
     }
 
     // Add to local service log
