@@ -2061,17 +2061,18 @@ async function runOCR(canvas){
     const ctx=crop.getContext('2d');
     ctx.drawImage(canvas,cx,cy,cw,ch,0,0,crop.width,crop.height);
 
-    // Adaptive threshold — works better than fixed 128 for different lighting
+    // Adaptive threshold
     const imgData=ctx.getImageData(0,0,crop.width,crop.height);
     const px=imgData.data;
-    // Calculate mean brightness
     let sum=0;
     for(let i=0;i<px.length;i+=4) sum+=0.299*px[i]+0.587*px[i+1]+0.114*px[i+2];
     const mean=sum/(px.length/4);
-    const thresh=mean*0.85; // slightly below mean
+    // If image is dark (dark plate, light text) invert first
+    const isDark = mean < 100;
+    const thresh = isDark ? mean*1.3 : mean*0.8;
     for(let i=0;i<px.length;i+=4){
       const gray=0.299*px[i]+0.587*px[i+1]+0.114*px[i+2];
-      const v=gray>thresh?255:0;
+      const v = isDark ? (gray<thresh?255:0) : (gray>thresh?255:0);
       px[i]=px[i+1]=px[i+2]=v; px[i+3]=255;
     }
     ctx.putImageData(imgData,0,0);
@@ -2082,20 +2083,66 @@ async function runOCR(canvas){
       tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ',
       tessedit_pageseg_mode:'6', // uniform block of text
     });
-    const {data:{text}}=await worker.recognize(crop);
+    const {data:{text, words}}=await worker.recognize(crop);
     await worker.terminate();
 
     const raw=text.toUpperCase().replace(/[^A-Z0-9]/g,'');
-    const m=raw.match(/([A-Z]{2}[0-9]{1,2}[A-Z]{1,2}[0-9]{4})/);
+
+    // Apply Indian plate format correction
+    // Indian plate: SS NN LL DDDD (State 2L + District 2D + Series 1-2L + Number 4D)
+    // Fix known OCR confusions in correct positions
+    const corrected = fixIndianPlate(raw);
+    const m = corrected.match(/([A-Z]{2}[0-9]{1,2}[A-Z]{1,3}[0-9]{3,4})/);
     if(m){ fillPlate(m[1]); }
-    else if(raw.length>=4){ fillPlate(raw.slice(0,12)); }
-    else { showManualInput('Could not read plate — type it above'); }
+    else if(corrected.length>=6){ fillPlate(corrected.slice(0,12)); }
+    else { showManualInput('Could not read plate clearly — type it above'); }
 
   } catch(e){
     console.warn('[OCR]',e?.message);
     showManualInput('Auto-read failed — type plate above');
   }
   el('ccap').disabled=false;
+}
+
+// Fix common Tesseract OCR mistakes for Indian number plates
+// Position-aware: letters where letters expected, digits where digits expected
+function fixIndianPlate(raw){
+  if(raw.length < 6) return raw;
+
+  // Common OCR character confusions
+  const letterFix = {'0':'O','1':'I','5':'S','6':'G','8':'B','2':'Z'};
+  const digitFix  = {'O':'0','I':'1','S':'5','G':'6','B':'8','Z':'2',
+                     'Q':'0','D':'0','U':'0','A':'4','T':'1',
+                     'E':'3','H':'4','L':'1','P':'7','R':'2','F':'8'};
+
+  // Try to match Indian plate structure: LL DD LL DDDD
+  // State code (2 letters): pos 0-1
+  // District code (2 digits): pos 2-3
+  // Series (1-3 letters): pos 4-5 or 4-6
+  // Number (4 digits): last 4
+
+  let s = raw;
+  const result = [];
+
+  // Parse character by character with position context
+  for(let i=0; i<s.length && i<12; i++){
+    const c = s[i];
+    if(i < 2){
+      // State code — must be letters
+      result.push(letterFix[c]||c);
+    } else if(i < 4){
+      // District code — must be digits
+      result.push(digitFix[c]||c);
+    } else if(s.length - i > 4){
+      // Series — must be letters
+      result.push(letterFix[c]||c);
+    } else {
+      // Last 4 — must be digits
+      result.push(digitFix[c]||c);
+    }
+  }
+
+  return result.join('');
 }
 
 function fillPlate(plate){
