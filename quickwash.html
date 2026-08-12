@@ -27,7 +27,7 @@
   --r:8px;--r2:12px;--r3:16px;--r4:20px;
 }
 html,body{height:100%;overflow:hidden}
-body{background:var(--bg);color:var(--ink);font-size:14px;display:flex}
+body{background:var(--bg);color:var(--ink);font-size:14px;display:flex;height:100vh;overflow:hidden;position:fixed;width:100%;top:0;left:0}
 ::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
 
 /* LOGIN */
@@ -49,9 +49,9 @@ body{background:var(--bg);color:var(--ink);font-size:14px;display:flex}
 .ldbtn:hover{border-color:#2563EB;color:#2563EB;background:#eff6ff}
 
 /* APP */
-#app{display:none;width:100%;height:100vh;overflow:hidden;flex-direction:row}
+#app{display:none;width:100%;height:100vh;overflow:hidden;flex-direction:row;position:absolute;top:0;left:0;right:0;bottom:0}
 #app.on{display:flex}
-#sb{width:224px;min-width:224px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;height:100vh;flex-shrink:0;overflow-y:auto}
+#sb{width:224px;min-width:224px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;height:100vh;flex-shrink:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
 #main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 
 /* SIDEBAR */
@@ -103,7 +103,7 @@ body{background:var(--bg);color:var(--ink);font-size:14px;display:flex}
 .tb h1{font-size:15px;font-weight:800;letter-spacing:-.3px}
 .tb-r{display:flex;align-items:center;gap:8px}
 .tb-dt{font-size:11px;color:var(--ink3)}
-.ct{flex:1;overflow-y:auto;padding:18px;background:var(--bg)}
+.ct{flex:1;overflow-y:auto;overflow-x:hidden;padding:18px;background:var(--bg);-webkit-overflow-scrolling:touch}
 
 /* BUTTONS */
 .btn{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:var(--r);font-size:12px;font-weight:600;cursor:pointer;border:none;transition:all .15s;white-space:nowrap}
@@ -304,35 +304,28 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
 #sb-ov.on{display:block}
 @media(max-width:768px){
   #mb{display:flex}
-  /* Sidebar slides off-screen on mobile */
-  #sb{position:fixed;left:-240px;top:0;bottom:0;z-index:200;transition:left .25s ease;height:100vh;width:230px}
+  #sb{position:fixed;left:-240px;top:0;bottom:0;z-index:200;transition:left .25s ease;height:100%;width:230px;-webkit-overflow-scrolling:touch}
   #sb.open{left:0;box-shadow:4px 0 20px rgba(0,0,0,.25)}
   #sb-ov{display:block!important}
-  /* Main content takes full width */
-  #main{margin-left:0!important;width:100%;overflow-x:hidden}
-  .tb{padding:0 12px}.tb h1{font-size:14px}.tb-dt{display:none}
-  .ct,.pg{padding:12px!important}
-  /* Grid collapse */
-  .g5,.g4,.g3{grid-template-columns:1fr 1fr!important}
-  .g2{grid-template-columns:1fr!important}
-  /* Modal full-screen on mobile */
+  #main{width:100%}
+  #app{position:fixed;top:0;left:0;right:0;bottom:0;height:100%}
+  .tb{padding:0 12px;flex-shrink:0}
+  .tb h1{font-size:14px}
+  .tb-dt{display:none}
+  .ct{padding:12px;-webkit-overflow-scrolling:touch}
+  .pg{padding:0}
+  .g5,.g4,.g3{grid-template-columns:1fr 1fr}
+  .g2{grid-template-columns:1fr}
   .ov{align-items:flex-end;padding:0}
-  .modal{border-radius:12px 12px 0 0;max-height:92vh;max-width:100%;width:100%;margin:0}
-  /* Other layouts */
-  .vtype-grid{grid-template-columns:repeat(2,1fr)!important}
-  .pm-grid{grid-template-columns:repeat(2,1fr)!important}
+  .modal{border-radius:12px 12px 0 0;max-height:90vh;max-width:100%;width:100%;margin:0}
+  .vtype-grid{grid-template-columns:repeat(2,1fr)}
+  .pm-grid{grid-template-columns:repeat(2,1fr)}
   .log-grid{grid-template-columns:1fr 1fr}
   .row.aic.jb{flex-wrap:wrap;gap:8px}
   .tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
-  /* Prevent horizontal scroll freeze */
-  body,#app{overflow-x:hidden!important}
-  /* Service log cards */
-  .sl-card .row{flex-wrap:wrap}
 }
 @media(max-width:480px){
-  .g4,.g3,.g5{grid-template-columns:1fr!important}
-  .vtype-grid{grid-template-columns:1fr 1fr!important}
-  .pm-grid{grid-template-columns:1fr 1fr!important}
+  .g4,.g3,.g5{grid-template-columns:1fr}
   .tb h1{font-size:13px}
 }
 </style>
