@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
@@ -4622,8 +4624,13 @@ function buildCCTVLogTable(logs){
     </tbody></table></div>`;
 }
 function triggerAnprScan(camId){
-  const cam=S.cameras.find(c=>c.id===camId);if(!cam)return;
+  const cam=S.cameras.find(c=>String(c.id)===String(camId));if(!cam)return;
   if(!cam.enabled){toast(cam.name+' is disabled','e');return;}
+  const provider=CFG.anprProvider||'demo';
+  if(provider==='demo'){
+    toast('⚙ Set ANPR Provider to Hikvision/OpenALPR in CCTV Settings to use real scanning','w');
+    return;
+  }
   toast('📷 '+cam.name+' scanning…','i');
   setTimeout(()=>runScan(cam,false),600);
 }
@@ -5227,7 +5234,11 @@ window.completeEntry = async function() {
     };
 
     // Insert into Supabase directly
+    const jobNum = 'JOB-' + String(Date.now()).slice(-6);
+    const invNum = 'INV-' + String(Date.now()).slice(-6);
     const {data:logRow, error:logErr} = await sbQ('service_logs').insert({
+      job_number: jobNum,
+      invoice_no: invNum,
       plate, model,
       vehicle_type_id: vtRow?.id||null,
       vehicle_cat_id:  vcRow?.id||null,
@@ -5246,8 +5257,8 @@ window.completeEntry = async function() {
     // Use real DB id
     localEntry.id     = logRow.id;
     localEntry._dbId  = logRow.id;
-    localEntry.jobNumber = logRow.job_number||('JOB-'+logRow.id.slice(-6).toUpperCase());
-    localEntry.invoiceNo = logRow.invoice_no||('INV-'+logRow.id.slice(-6).toUpperCase());
+    localEntry.jobNumber = logRow.job_number || jobNum;
+    localEntry.invoiceNo = logRow.invoice_no || invNum;
 
     // Insert service line items
     if(svcDetails.length){
