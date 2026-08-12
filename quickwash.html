@@ -1946,8 +1946,46 @@ function saveQA(){
 
 // Camera scan
 function openCamScan(){
-  openModal(`${mhd('📷 Scan Plate')}<div style="background:#000;border-radius:var(--r2);overflow:hidden;position:relative;margin-bottom:12px;min-height:200px"><video id="camv" autoplay playsinline muted style="width:100%;max-height:260px;object-fit:cover"></video><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:72%;height:62px;border:2.5px solid #22c55e;border-radius:6px;box-shadow:0 0 0 9999px rgba(0,0,0,.4);pointer-events:none"><div style="position:absolute;top:0;left:0;width:100%;height:2px;background:linear-gradient(90deg,transparent,#22c55e,transparent);animation:scanL 1.8s linear infinite"></div></div></div><style>@keyframes scanL{0%{top:0}100%{top:calc(100% - 2px)}}</style><div id="cst" style="font-size:12px;color:var(--ink3);text-align:center;margin-bottom:10px">Starting camera…</div><div id="cres" style="display:none;background:var(--glt);border:1.5px solid #A7F3D0;border-radius:var(--r);padding:10px;text-align:center;margin-bottom:10px"><div style="font-size:9px;color:var(--green);font-weight:800;margin-bottom:3px">DETECTED</div><div id="cpl" style="font-size:20px;font-weight:800;letter-spacing:2px;color:var(--green)"></div></div><div style="display:flex;gap:8px"><button class="btn bs bsm" id="ccap" onclick="capPlate()" style="flex:1;justify-content:center">📸 Capture</button><button class="btn bp bsm" id="cuse" onclick="usePlate()" style="flex:1;justify-content:center;display:none">✓ Use Plate</button></div>`);
-  navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}}).then(s=>{window._cs=s;const v=el('camv');v.srcObject=s;v.play();el('cst').textContent='Position plate in green frame and tap Capture';}).catch(()=>{el('cst').textContent='⚠ Camera access denied';});
+  openModal(`${mhd('📷 Scan Plate')}
+    <div style="background:#000;border-radius:var(--r2);overflow:hidden;position:relative;margin-bottom:10px">
+      <video id="camv" autoplay playsinline muted style="width:100%;max-height:220px;object-fit:cover;display:block"></video>
+      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:78%;height:56px;border:2.5px solid #22c55e;border-radius:6px;box-shadow:0 0 0 9999px rgba(0,0,0,.5);pointer-events:none">
+        <div style="position:absolute;top:0;left:0;width:100%;height:2px;background:linear-gradient(90deg,transparent,#22c55e,transparent);animation:scanL 1.8s linear infinite"></div>
+      </div>
+    </div>
+    <style>@keyframes scanL{0%{top:0}100%{top:calc(100% - 2px)}}</style>
+
+    <div id="cres" style="display:none;background:var(--glt);border:1.5px solid #A7F3D0;border-radius:var(--r);padding:8px 12px;text-align:center;margin-bottom:8px">
+      <div style="font-size:9px;color:var(--green);font-weight:800;margin-bottom:2px">OCR DETECTED</div>
+      <div id="cpl" style="font-size:20px;font-weight:800;letter-spacing:2px;color:var(--green)"></div>
+    </div>
+
+    <div style="font-size:11px;color:var(--ink3);margin-bottom:6px;text-align:center" id="cst">Position plate in green frame, then tap Capture or type below</div>
+
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input id="cap-plate-input" type="text" placeholder="Type plate: KL04AP1424"
+        style="flex:1;padding:11px;border:2px solid var(--blue);border-radius:8px;font-size:16px;font-weight:800;text-transform:uppercase;letter-spacing:2px;text-align:center"
+        oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')"
+        onkeydown="if(event.key==='Enter')useManualPlate()" maxlength="12">
+      <button onclick="useManualPlate()" style="padding:11px 18px;background:var(--blue);color:#fff;border:none;border-radius:8px;font-weight:800;cursor:pointer;font-size:14px;white-space:nowrap">✓ Use</button>
+    </div>
+
+    <div style="display:flex;gap:8px">
+      <button class="btn bs bsm" id="ccap" onclick="capPlate()" style="flex:1;justify-content:center">📸 Auto-Read Plate</button>
+      <button class="btn bp bsm" id="cuse" onclick="usePlate()" style="flex:1;justify-content:center;display:none">✓ Use OCR Result</button>
+    </div>
+  `);
+  navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}})
+    .then(s=>{
+      window._cs=s;
+      const v=el('camv');
+      v.srcObject=s;
+      v.play();
+      // Auto-focus input
+      setTimeout(()=>document.getElementById('cap-plate-input')?.focus(),300);
+    })
+    .catch(()=>{el('cst').textContent='⚠ Camera access denied — type plate manually';});
+}
 }
 function closeCamS(){if(window._cs){window._cs.getTracks().forEach(t=>t.stop());window._cs=null;}closeModal();}
 function capPlate(){
@@ -2034,15 +2072,15 @@ async function runOCR(canvas){
 
     if(result.length>=4){
       window._cp=result;
+      // Fill the manual input field AND show the OCR result box
+      const inp=document.getElementById('cap-plate-input');
+      if(inp) inp.value=result;
       el('cpl').textContent=result;
       el('cres').style.display='block';
       el('cuse').style.display='inline-flex';
-      el('cst').textContent='✓ Plate detected! Verify and tap Use Plate';
-      // Also pre-fill manual input in case user wants to correct
-      const mi=document.getElementById('cap-plate-input');
-      if(mi) mi.value=result;
+      el('cst').textContent='✓ Auto-read: '+result+' — tap ✓ Use or edit above';
     } else {
-      showManualInput('Could not read plate — type it manually');
+      showManualInput('Could not auto-read — type plate manually');
     }
   } catch(e) {
     console.warn('[OCR]',e?.message);
@@ -2052,33 +2090,23 @@ async function runOCR(canvas){
 }
 
 function showManualInput(msg){
-  el('cst').textContent=msg||'Enter plate manually:';
+  if(msg) el('cst').textContent=msg;
   el('ccap').disabled=false;
-  const existing=document.getElementById('cap-manual');
-  if(!existing){
-    const div=document.createElement('div');
-    div.id='cap-manual';
-    div.style.cssText='margin-top:8px;display:flex;gap:8px;align-items:center';
-    div.innerHTML='<input id="cap-plate-input" type="text" placeholder="e.g. KL04AP1424" '
-      +'style="flex:1;padding:10px;border:2px solid var(--blue);border-radius:8px;font-size:15px;font-weight:700;text-transform:uppercase;letter-spacing:2px" '
-      +'oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,\'\')" maxlength="12">'
-      +'<button onclick="useManualPlate()" style="padding:10px 14px;background:var(--blue);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;white-space:nowrap">Use</button>';
-    const cres=document.getElementById('cres');
-    cres.parentNode.insertBefore(div,cres);
-    setTimeout(()=>document.getElementById('cap-plate-input')?.focus(),100);
-  }
+  setTimeout(()=>document.getElementById('cap-plate-input')?.focus(),100);
 }
-
 function useManualPlate(){
   const val=(document.getElementById('cap-plate-input')?.value||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
   if(!val||val.length<3){toast('Enter a valid plate number','e');return;}
   window._cp=val;
-  el('cpl').textContent=val;
-  el('cres').style.display='block';
-  el('cuse').style.display='inline-flex';
-  el('cst').textContent='✓ Plate ready!';
+  closeCamS();
+  if(el('wiz-plate')){el('wiz-plate').value=val;onPlate();}
 }
-function usePlate(){if(window._cp&&el('wiz-plate')){el('wiz-plate').value=window._cp;onPlate();}closeCamS();}
+function usePlate(){
+  if(window._cp){
+    closeCamS();
+    if(el('wiz-plate')){el('wiz-plate').value=window._cp;onPlate();}
+  }
+}
 
 // Step 2 - Vehicle Details
 function renderVD(){
