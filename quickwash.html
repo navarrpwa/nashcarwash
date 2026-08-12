@@ -1956,24 +1956,29 @@ function capPlate(){
   el('ccap').disabled=true;
   const video=document.getElementById('camv');
   if(!video||!video.videoWidth){
-    el('cst').textContent='⚠ Camera not ready — try again';
+    el('cst').textContent='⚠ Camera not ready';
     el('ccap').disabled=false;
     return;
   }
-  // Capture frame to canvas
   const canvas=document.createElement('canvas');
   canvas.width=video.videoWidth;
   canvas.height=video.videoHeight;
   canvas.getContext('2d').drawImage(video,0,0);
 
-  // Load Tesseract.js OCR (lightweight WASM-based)
+  // Show manual input IMMEDIATELY — user can type while OCR tries
+  showManualInput('Type plate or wait for auto-read…');
+
+  // Try OCR in background
   if(!window.Tesseract){
-    el('cst').textContent='Loading OCR engine…';
     const s=document.createElement('script');
     s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
     s.onload=()=>runOCR(canvas);
-    s.onerror=()=>showManualInput('OCR failed — enter plate manually');
+    s.onerror=()=>{el('cst').textContent='Type the plate number above';el('ccap').disabled=false;};
     document.head.appendChild(s);
+  } else {
+    runOCR(canvas);
+  }
+}
   } else {
     runOCR(canvas);
   }
@@ -1981,41 +1986,72 @@ function capPlate(){
 
 async function runOCR(canvas){
   try {
-    el('cst').textContent='🔍 Reading plate text…';
-    // Crop to the green box area (center 72% width, middle area)
+    el('cst').textContent='🔍 Reading plate…';
+
+    // Crop to green box area (center strip)
     const crop=document.createElement('canvas');
-    const cx=Math.floor(canvas.width*0.14);
-    const cy=Math.floor(canvas.height*0.3);
-    const cw=Math.floor(canvas.width*0.72);
-    const ch=Math.floor(canvas.height*0.4);
-    crop.width=cw; crop.height=ch;
+    const cx=Math.floor(canvas.width*0.10);
+    const cy=Math.floor(canvas.height*0.28);
+    const cw=Math.floor(canvas.width*0.80);
+    const ch=Math.floor(canvas.height*0.44);
+    crop.width=cw*2; crop.height=ch*2; // 2x upscale for better OCR
     const ctx=crop.getContext('2d');
-    // Enhance contrast for better OCR
-    ctx.filter='contrast(2) brightness(1.2) grayscale(1)';
-    ctx.drawImage(canvas,cx,cy,cw,ch,0,0,cw,ch);
+    // High contrast preprocessing for number plates
+    ctx.imageSmoothingEnabled=true;
+    ctx.drawImage(canvas,cx,cy,cw,ch,0,0,cw*2,ch*2);
+    // Apply threshold to make plate text clearer
+    const imgData=ctx.getImageData(0,0,crop.width,crop.height);
+    const d=imgData.data;
+    for(let i=0;i<d.length;i+=4){
+      const gray=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      const v=gray>128?255:0;
+      d[i]=d[i+1]=d[i+2]=v;
+    }
+    ctx.putImageData(imgData,0,0);
 
     const worker=await Tesseract.createWorker('eng');
     await worker.setParameters({
       tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-      tessedit_pageseg_mode:'7', // Single line
+      tessedit_pageseg_mode:'7',
+      tessedit_ocr_engine_mode:'1',
     });
-    const {data:{text}}=await worker.recognize(crop);
+
+    // Try cropped first
+    let {data:{text}}=await worker.recognize(crop);
+    let raw=text.replace(/[^A-Z0-9]/g,'').trim().toUpperCase();
+
+    // If crop didn't work, try full canvas
+    if(raw.length<4){
+      const full=document.createElement('canvas');
+      full.width=canvas.width; full.height=canvas.height;
+      const fctx=full.getContext('2d');
+      fctx.filter='contrast(2) grayscale(1)';
+      fctx.drawImage(canvas,0,0);
+      const r2=await worker.recognize(full);
+      raw=r2.data.text.replace(/[^A-Z0-9]/g,'').trim().toUpperCase();
+    }
+
     await worker.terminate();
 
-    // Clean OCR result — remove spaces and special chars, uppercase
-    const raw=text.replace(/[^A-Z0-9]/g,'').trim().toUpperCase();
-    if(raw.length>=4){
-      window._cp=raw;
-      el('cpl').textContent=raw;
+    // Extract plate pattern: 2 letters + 2 digits + 1-2 letters + 4 digits (Indian format)
+    const plateMatch=raw.match(/([A-Z]{2}[0-9]{1,2}[A-Z]{1,2}[0-9]{4})/);
+    const result=plateMatch?plateMatch[1]:raw;
+
+    if(result.length>=4){
+      window._cp=result;
+      el('cpl').textContent=result;
       el('cres').style.display='block';
-      el('cuse').style.display='flex';
       el('cuse').style.display='inline-flex';
-      el('cst').textContent='✓ Plate detected! Tap Use Plate or retake';
+      el('cst').textContent='✓ Plate detected! Verify and tap Use Plate';
+      // Also pre-fill manual input in case user wants to correct
+      const mi=document.getElementById('cap-plate-input');
+      if(mi) mi.value=result;
     } else {
-      showManualInput('Could not read plate clearly — enter manually');
+      showManualInput('Could not read plate — type it manually');
     }
   } catch(e) {
-    showManualInput('OCR error — enter plate manually');
+    console.warn('[OCR]',e?.message);
+    showManualInput('OCR unavailable — type plate manually');
   }
   el('ccap').disabled=false;
 }
