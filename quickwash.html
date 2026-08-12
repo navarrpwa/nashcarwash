@@ -1986,7 +1986,6 @@ function openCamScan(){
     })
     .catch(()=>{el('cst').textContent='⚠ Camera access denied — type plate manually';});
 }
-}
 function closeCamS(){if(window._cs){window._cs.getTracks().forEach(t=>t.stop());window._cs=null;}closeModal();}
 function capPlate(){
   el('cst').textContent='📸 Reading plate…';
