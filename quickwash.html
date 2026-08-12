@@ -457,7 +457,7 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
           </div>
           <div class="acc-body" id="adm-sys">
             <div class="ani" onclick="admGo('company-settings')">Company Settings</div>
-            <div class="ani" onclick="admGo('sms-settings')">SMS Settings</div>
+            <div class="ani" onclick="admGo('sms-settings')">💬 WhatsApp Settings</div>
             <div class="ani" onclick="admGo('sms-logs')">SMS Logs</div>
             <div class="ani" onclick="admGo('system-settings')">System Settings</div>
             <div class="ani" onclick="admGo('reports-config')">Reports Config</div>
@@ -1663,7 +1663,12 @@ const CFG={
   ],
   sms:{
     enabled:true,
-    provider:'demo', // 'demo'|'twilio'|'msg91'|'textlocal'
+    provider:'whatsapp', // 'demo'|'whatsapp'|'twilio'|'msg91'
+    // WhatsApp Business API (Meta)
+    waToken:'',        // Meta WhatsApp API token (from Meta Developer Console)
+    waPhoneId:'',      // WhatsApp Business Phone Number ID
+    waTemplateName:'invoice_receipt', // Message template name (must be approved in Meta)
+    waLanguage:'en',   // Template language
     apiKey:'',
     senderId:'QWASH',
     autoSendOnComplete:true,
@@ -2735,7 +2740,9 @@ function printSlRct(){
 function sendSMSFromReceipt(){closeModal();if(window._lastSlLog)sendSMS(window._lastSlLog.id);}
 
 // ── SMS System ──
-function sendSMS(logId,auto=false){
+function sendSMS(logId,auto=false){ sendWhatsApp(logId,auto); } // redirect to WhatsApp
+
+function sendWhatsApp(logId,auto=false){
   const l=S.sl.find(x=>x.id===logId);if(!l)return;
   const cust=S.customers.find(c=>c.id===l.custId);
   if(!cust?.phone){toast('No customer phone number','w');return;}
@@ -2761,81 +2768,131 @@ function sendSMS(logId,auto=false){
     .replace('{payMethod}',payLine||'—')
     .replace('{loyaltyMsg}',loyMsg);
 
+  // Build WhatsApp message
+  const waMsg = `*${CFG.bizName}* - Invoice Receipt
+
+` +
+    `Hi ${cust.name}! 🚗
+` +
+    `Your vehicle *${l.plate}* wash is complete.
+
+` +
+    `📋 *Invoice: ${rcptNum}*
+` +
+    `📅 Date: ${fdt(l.enteredAt)}
+` +
+    `🔧 Services: ${l.svcs.join(', ')}
+` +
+    `💰 Total: *${frs(total)}*
+` +
+    `💳 Payment: ${payLine||'Cash'} ✅
+` +
+    (loyMsg?`
+💜 ${loyMsg}
+`:'') +
+    `
+Thank you for choosing ${CFG.bizName}! 🙏`;
+
   if(!auto){
-    // Show preview modal with send button
-    openModal(`${mhd('📱 Send SMS Receipt')}
-      <div style="background:#f0fdf4;border:1.5px solid #a7f3d0;border-radius:var(--r2);padding:14px;margin-bottom:14px">
-        <div style="font-size:10px;font-weight:800;color:var(--green);margin-bottom:6px">TO: ${cust.name} (${cust.phone})</div>
-        <div style="font-size:12px;line-height:1.6;color:var(--ink2)">${smsText}</div>
-        <div style="font-size:10px;color:var(--ink3);margin-top:6px">${smsText.length} characters</div>
+    openModal(`${mhd('💬 Send WhatsApp Receipt')}
+      <div style="background:#dcfce7;border:1.5px solid #86efac;border-radius:var(--r2);padding:14px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+          <div style="font-size:12px;font-weight:800;color:#16a34a">TO: ${cust.name} (${cust.phone})</div>
+        </div>
+        <div style="font-size:12px;line-height:1.7;white-space:pre-wrap;color:var(--ink)">${waMsg}</div>
       </div>
-      <div class="fg"><label>Phone Number</label><input type="tel" id="sms-phone" value="${cust.phone}" maxlength="15"></div>
-      ${CFG.sms.provider==='demo'?`<div style="background:var(--alt);border-radius:var(--r);padding:8px 12px;margin-bottom:12px;font-size:11px;color:var(--amber)">ℹ Demo mode — SMS will be simulated. Configure real gateway in Admin → SMS Settings.</div>`:''}
+      <div class="fg"><label>WhatsApp Number (with country code)</label>
+        <input type="tel" id="wa-phone" value="${cust.phone}" placeholder="+919876543210" maxlength="15"></div>
+      ${!CFG.sms.waToken?`<div style="background:var(--alt);border-radius:var(--r);padding:8px 12px;margin-bottom:12px;font-size:11px;color:var(--amber)">⚠ WhatsApp API not configured. <a onclick="gp('admin-panel')" style="color:var(--blue);cursor:pointer">Set up in Admin → WhatsApp Settings</a></div>`:''}
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button class="btn bs" onclick="closeModal()">Cancel</button>
-        <button class="btn bp" onclick="dispatchSMS(${logId},'${encodeURIComponent(smsText)}',document.getElementById('sms-phone').value)">📤 Send SMS</button>
+        <button class="btn" style="background:#25D366;color:#fff;border:none;padding:8px 16px;border-radius:var(--r);font-weight:700;cursor:pointer" onclick="dispatchWhatsApp('${logId}',encodeURIComponent(document.getElementById('wa-phone').value),'${encodeURIComponent(waMsg)}')">
+          💬 Send WhatsApp
+        </button>
       </div>`);
   } else {
-    // Silent auto-send
-    dispatchSMS(logId,encodeURIComponent(smsText),cust.phone,true);
+    dispatchWhatsApp(logId, encodeURIComponent(cust.phone), encodeURIComponent(waMsg), true);
   }
 }
 
-function dispatchSMS(logId,encodedText,phone,silent=false){
-  const l=S.sl.find(x=>x.id===logId);if(!l)return;
-  const text=decodeURIComponent(encodedText);
-  if(!silent)closeModal();
+async function dispatchWhatsApp(logId, encodedPhone, encodedMsg, silent=false){
+  const l=S.sl.find(x=>x.id===logId); if(!l) return;
+  const phone=decodeURIComponent(encodedPhone).replace(/[^0-9+]/g,'');
+  const msg=decodeURIComponent(encodedMsg);
+  if(!silent) closeModal();
+
+  // Format phone: ensure starts with country code
+  const formattedPhone = phone.startsWith('+') ? phone.slice(1) :
+                         phone.startsWith('0')  ? '91'+phone.slice(1) :
+                         phone.length===10       ? '91'+phone : phone;
+
   // Log the attempt
-  const logEntry={id:CFG.sms.logs.length+1,logId,phone,text,status:'sending',at:new Date().toISOString(),attempts:1};
+  const logEntry={id:CFG.sms.logs.length+1,logId,phone:formattedPhone,text:msg,
+    status:'sending',at:new Date().toISOString(),attempts:1};
   CFG.sms.logs.unshift(logEntry);
-  // Simulate dispatch (in production: call API)
-  simulateSMSGateway(logEntry,l,phone,text);
-}
 
-async function simulateSMSGateway(logEntry,l,phone,text){
-  // Demo: simulate 95% success after 800ms
-  await new Promise(r=>setTimeout(r,800));
-  const success=CFG.sms.provider==='demo'?true:Math.random()>.05;
-  logEntry.status=success?'sent':'failed';
-  logEntry.deliveredAt=success?new Date().toISOString():null;
-  l.smsStatus=success?'sent':'failed';
-
-  if(success){
-    toast('📱 SMS sent to '+phone,'ok');
-    // If real provider, would call their API here
-    if(CFG.sms.provider==='twilio') callTwilioAPI(phone,text,logEntry);
-    else if(CFG.sms.provider==='msg91') callMsg91API(phone,text,logEntry);
-  } else {
-    toast('📱 SMS failed — will retry','e');
-    // Retry logic
-    if(logEntry.attempts<CFG.sms.retryCount){
-      logEntry.attempts++;
-      setTimeout(()=>simulateSMSGateway(logEntry,l,phone,text),5000);
+  try {
+    if(!CFG.sms.waToken || !CFG.sms.waPhoneId){
+      // No API configured — open WhatsApp web as fallback
+      const waUrl='https://wa.me/'+formattedPhone+'?text='+encodeURIComponent(msg);
+      window.open(waUrl,'_blank');
+      logEntry.status='opened';
+      l.smsStatus='sent';
+      toast('💬 WhatsApp opened — tap Send in WhatsApp','ok');
+      renderSL();
+      return;
     }
+
+    // Meta WhatsApp Business API
+    // Send text message (freeform allowed within 24hr window)
+    const resp = await fetch(
+      'https://graph.facebook.com/v18.0/'+CFG.sms.waPhoneId+'/messages',{
+        method:'POST',
+        headers:{
+          'Authorization':'Bearer '+CFG.sms.waToken,
+          'Content-Type':'application/json'
+        },
+        body: JSON.stringify({
+          messaging_product:'whatsapp',
+          to: formattedPhone,
+          type:'text',
+          text:{ body: msg }
+        })
+      }
+    );
+    const result=await resp.json();
+    if(resp.ok && result.messages){
+      logEntry.status='sent';
+      logEntry.deliveredAt=new Date().toISOString();
+      l.smsStatus='sent';
+      toast('💬 WhatsApp receipt sent to '+formattedPhone.slice(-4).padStart(10,'*'),'ok');
+    } else {
+      throw new Error(result.error?.message||'Send failed');
+    }
+  } catch(e){
+    console.error('[WhatsApp]',e.message);
+    logEntry.status='failed';
+    l.smsStatus='failed';
+    // Fallback: open WhatsApp web
+    const waUrl='https://wa.me/'+formattedPhone+'?text='+encodeURIComponent(msg);
+    window.open(waUrl,'_blank');
+    toast('💬 API failed — WhatsApp opened manually','w');
   }
   renderSL();
 }
 
-// Stub API callers (implement with real credentials)
-async function callTwilioAPI(phone,text,logEntry){
-  try{
-    const r=await fetch('https://api.twilio.com/2010-04-01/Accounts/'+CFG.sms.apiKey+'/Messages.json',{
-      method:'POST',headers:{'Authorization':'Basic '+btoa(CFG.sms.apiKey+':'+CFG.sms.authToken),'Content-Type':'application/x-www-form-urlencoded'},
-      body:'To='+encodeURIComponent(phone)+'&From='+encodeURIComponent(CFG.sms.senderId)+'&Body='+encodeURIComponent(text)
-    });
-    logEntry.status=r.ok?'sent':'failed';
-  }catch(e){logEntry.status='failed';}
+// Keep old name for compatibility
+function dispatchSMS(logId,encodedText,phone,silent=false){
+  dispatchWhatsApp(logId,encodeURIComponent(phone),encodedText,silent);
 }
 
-async function callMsg91API(phone,text,logEntry){
-  try{
-    const r=await fetch(`https://api.msg91.com/api/sendhttp.php?authkey=${CFG.sms.apiKey}&mobiles=${phone}&message=${encodeURIComponent(text)}&route=4&sender=${CFG.sms.senderId}&country=91`);
-    logEntry.status=r.ok?'sent':'failed';
-  }catch(e){logEntry.status='failed';}
+function testWhatsApp(){
+  const phone=prompt('Enter your WhatsApp number (with country code, e.g. +919876543210):');
+  if(!phone) return;
+  const msg=`*${CFG.bizName}* - Test Message\n\nHi! This is a test message from your QuickWash system.\nWhatsApp integration is working correctly! ✅\n\nTime: ${new Date().toLocaleString()}`;
+  dispatchWhatsApp('test', encodeURIComponent(phone), encodeURIComponent(msg));
 }
-
-// ── Edit history logger ──
-function logEdit(l,action){
   if(!l.editHistory)l.editHistory=[];
   l.editHistory.push({by:S.user?.name||'Staff',action,at:new Date().toISOString()});
 }
@@ -3759,49 +3816,96 @@ function renderAdm(){
     const pmRows=CFG.payMethods.map(m=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border:1.5px solid var(--line2);border-radius:var(--r2);background:#fff"><div style="display:flex;align-items:center;gap:10px"><span style="font-size:18px">${m.icon}</span><div><div style="font-size:13px;font-weight:700">${m.label}</div><div style="font-size:10px;color:var(--ink3)">${m.id}</div></div></div><label style="display:flex;align-items:center;gap:7px;cursor:pointer"><span style="font-size:11px;font-weight:700;color:${m.enabled?'var(--green)':'var(--ink3)'}">${m.enabled?'Enabled':'Disabled'}</span><input type="checkbox" style="width:auto;width:16px;height:16px;accent-color:var(--blue)" ${m.enabled?'checked':''} onchange="CFG.payMethods.find(x=>x.id==='${m.id}').enabled=this.checked;this.previousElementSibling.textContent=this.checked?'Enabled':'Disabled';this.previousElementSibling.style.color=this.checked?'var(--green)':'var(--ink3)'"></label></div>`).join('');
     c.innerHTML=`<div class="sec mb3">Payment Methods</div><div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">${pmRows}</div><button class="btn bp bsm" onclick="toast('Payment methods saved!','ok')">Save</button>`;
   } else if(section==='sms-settings'){
-    c.innerHTML=`<div class="sec mb3">SMS Settings & Integration</div>
+    const waSent=CFG.sms.logs.filter(l=>l.status==='sent'||l.status==='opened');
+    c.innerHTML=`<div class="sec mb3">💬 WhatsApp Settings</div>
     <div class="g4 mb4">
-      ${kc('Sent Today',CFG.sms.logs.filter(l=>{return new Date(l.at).toDateString()===new Date().toDateString()&&l.status==='sent';}).length,'Messages','up')}
-      ${kc('Total Sent',CFG.sms.logs.filter(l=>l.status==='sent').length,'All time','')}
-      ${kc('Failed',CFG.sms.logs.filter(l=>l.status==='failed').length,'Delivery errors',CFG.sms.logs.some(l=>l.status==='failed')?'dn':'')}
-      ${kc('Auto-send',CFG.sms.autoSendOnComplete?'ON':'OFF',CFG.sms.autoSendOnPayment?'+ On payment':'On delivery only','')}
+      ${kc('Sent Today',CFG.sms.logs.filter(l=>new Date(l.at).toDateString()===new Date().toDateString()&&(l.status==='sent'||l.status==='opened')).length,'Messages','up')}
+      ${kc('Total Sent',waSent.length,'All time','')}
+      ${kc('Failed',CFG.sms.logs.filter(l=>l.status==='failed').length,'Errors',CFG.sms.logs.some(l=>l.status==='failed')?'dn':'')}
+      ${kc('Auto-send',CFG.sms.autoSendOnComplete?'ON':'OFF','On delivery','')}
     </div>
+
     <div class="card mb4">
-      <div class="sec" style="font-size:12px;margin-bottom:12px">Gateway Provider</div>
-      <div class="g2" style="gap:10px">
-        <div class="fg"><label>SMS Provider</label>
-          <select onchange="CFG.sms.provider=this.value;renderAdm()">
-            <option value="demo" ${CFG.sms.provider==='demo'?'selected':''}>🎭 Demo (Simulation)</option>
-            <option value="twilio" ${CFG.sms.provider==='twilio'?'selected':''}>Twilio</option>
-            <option value="msg91" ${CFG.sms.provider==='msg91'?'selected':''}>MSG91</option>
-            <option value="textlocal" ${CFG.sms.provider==='textlocal'?'selected':''}>Textlocal</option>
-          </select>
-          ${CFG.sms.provider==='demo'?'<div style="font-size:10px;color:var(--amber);margin-top:3px">Demo mode — SMS are simulated, not actually sent.</div>':''}
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+        <div><div style="font-size:14px;font-weight:800">WhatsApp Business API</div>
+          <div style="font-size:11px;color:var(--ink3)">Meta Cloud API — send receipts automatically via WhatsApp</div>
         </div>
-        <div class="fg"><label>Sender ID / From Number</label><input type="text" value="${CFG.sms.senderId}" maxlength="11" oninput="CFG.sms.senderId=this.value" placeholder="QWASH"><div style="font-size:10px;color:var(--ink3);margin-top:3px">Max 11 chars, no spaces</div></div>
       </div>
-      ${CFG.sms.provider!=='demo'?`<div class="g2" style="gap:10px"><div class="fg"><label>API Key / Account SID</label><input type="text" value="${CFG.sms.apiKey||''}" oninput="CFG.sms.apiKey=this.value" placeholder="Enter API key"></div><div class="fg"><label>Auth Token</label><input type="password" value="${CFG.sms.authToken||''}" oninput="CFG.sms.authToken=this.value" placeholder="Enter auth token"></div></div>`:''}
-      <div class="fg mt3"><label>Retry Attempts (on failure)</label><input type="number" value="${CFG.sms.retryCount}" min="0" max="5" style="width:80px" oninput="CFG.sms.retryCount=parseInt(this.value)||0"></div>
-      <button class="btn bp bsm mt3" onclick="toast('Gateway settings saved!','ok')">Save Gateway</button>
+
+      <div style="background:var(--alt);border-radius:var(--r2);padding:10px 14px;margin-bottom:14px;font-size:11px;color:var(--amber);line-height:1.6">
+        📋 <b>Setup steps:</b><br>
+        1. Go to <b>developers.facebook.com</b> → Create App → Business<br>
+        2. Add <b>WhatsApp</b> product → Get Phone Number ID & Token<br>
+        3. Paste below and save. Without API token, app will open WhatsApp manually.
+      </div>
+
+      <div class="g2" style="gap:10px">
+        <div class="fg"><label>WhatsApp Phone Number ID</label>
+          <input type="text" value="${CFG.sms.waPhoneId||''}" oninput="CFG.sms.waPhoneId=this.value"
+            placeholder="From Meta Developer Console">
+          <div style="font-size:10px;color:var(--ink3);margin-top:3px">Found in WhatsApp → Getting Started in Meta dashboard</div>
+        </div>
+        <div class="fg"><label>Permanent Access Token</label>
+          <input type="password" id="wa-token-inp" value="${CFG.sms.waToken||''}" oninput="CFG.sms.waToken=this.value"
+            placeholder="EAA...">
+          <div style="font-size:10px;color:var(--ink3);margin-top:3px">From Meta System User → Generate token (never expires)</div>
+        </div>
+      </div>
+
+      <div class="fg mt3"><label>Business Display Name</label>
+        <input type="text" value="${CFG.sms.senderId||CFG.bizName}" oninput="CFG.sms.senderId=this.value"
+          placeholder="${CFG.bizName}">
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button class="btn bp bsm" onclick="CFG.sms.waToken=document.getElementById('wa-token-inp').value;dbSave('saveConfig',['wa_token',CFG.sms.waToken],'WhatsApp token').catch(()=>{});toast('WhatsApp settings saved ✓','ok')">
+          💾 Save Settings
+        </button>
+        <button class="btn bs bsm" onclick="testWhatsApp()">📤 Send Test Message</button>
+        <div style="font-size:11px;color:${CFG.sms.waToken?'var(--green)':'var(--red)'};align-self:center;font-weight:700">
+          ${CFG.sms.waToken?'✅ API Configured':'⚠ Not configured — will open WhatsApp manually'}
+        </div>
+      </div>
     </div>
+
     <div class="card mb4">
       <div class="sec" style="font-size:12px;margin-bottom:12px">Auto-send Rules</div>
       <div style="display:flex;flex-direction:column;gap:8px">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1.5px solid var(--line2);border-radius:var(--r2)"><div><div style="font-size:13px;font-weight:700">SMS System</div><div style="font-size:11px;color:var(--ink3)">Master enable/disable all SMS</div></div><label style="display:flex;align-items:center;gap:7px;cursor:pointer"><span style="font-size:11px;font-weight:700;color:${CFG.sms.enabled?'var(--green)':'var(--ink3)'}">${CFG.sms.enabled?'Enabled':'Disabled'}</span><input type="checkbox" style="width:auto;width:16px;height:16px;accent-color:var(--blue)" ${CFG.sms.enabled?'checked':''} onchange="CFG.sms.enabled=this.checked;renderAdm()"></label></div>
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1.5px solid var(--line2);border-radius:var(--r2)"><div><div style="font-size:13px;font-weight:700">Auto-send on Delivery</div><div style="font-size:11px;color:var(--ink3)">SMS when status set to Delivered</div></div><input type="checkbox" style="width:auto;width:16px;height:16px;accent-color:var(--blue)" ${CFG.sms.autoSendOnComplete?'checked':''} onchange="CFG.sms.autoSendOnComplete=this.checked"></div>
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1.5px solid var(--line2);border-radius:var(--r2)"><div><div style="font-size:13px;font-weight:700">Auto-send on Payment</div><div style="font-size:11px;color:var(--ink3)">SMS when payment confirmed</div></div><input type="checkbox" style="width:auto;width:16px;height:16px;accent-color:var(--blue)" ${CFG.sms.autoSendOnPayment?'checked':''} onchange="CFG.sms.autoSendOnPayment=this.checked"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1.5px solid var(--line2);border-radius:var(--r2)">
+          <div><div style="font-size:13px;font-weight:700">WhatsApp Enabled</div><div style="font-size:11px;color:var(--ink3)">Master on/off for all WhatsApp messages</div></div>
+          <label style="display:flex;align-items:center;gap:7px;cursor:pointer">
+            <span style="font-size:11px;font-weight:700;color:${CFG.sms.enabled?'var(--green)':'var(--ink3)'}">${CFG.sms.enabled?'ON':'OFF'}</span>
+            <input type="checkbox" style="width:16px;height:16px;accent-color:#25D366" ${CFG.sms.enabled?'checked':''} onchange="CFG.sms.enabled=this.checked;renderAdm()">
+          </label>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1.5px solid var(--line2);border-radius:var(--r2)">
+          <div><div style="font-size:13px;font-weight:700">Auto-send on Delivery</div><div style="font-size:11px;color:var(--ink3)">Send WhatsApp when vehicle is delivered</div></div>
+          <input type="checkbox" style="width:16px;height:16px;accent-color:#25D366" ${CFG.sms.autoSendOnComplete?'checked':''} onchange="CFG.sms.autoSendOnComplete=this.checked">
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1.5px solid var(--line2);border-radius:var(--r2)">
+          <div><div style="font-size:13px;font-weight:700">Auto-send on Payment</div><div style="font-size:11px;color:var(--ink3)">Send WhatsApp when payment is confirmed</div></div>
+          <input type="checkbox" style="width:16px;height:16px;accent-color:#25D366" ${CFG.sms.autoSendOnPayment?'checked':''} onchange="CFG.sms.autoSendOnPayment=this.checked">
+        </div>
       </div>
     </div>
+
     <div class="card">
-      <div class="sec" style="font-size:12px;margin-bottom:6px">SMS Template</div>
-      <div style="font-size:10px;color:var(--ink3);margin-bottom:8px;line-height:1.6">Placeholders: <code>{custName}</code> <code>{bizName}</code> <code>{plate}</code> <code>{invoice}</code> <code>{date}</code> <code>{time}</code> <code>{services}</code> <code>{total}</code> <code>{paid}</code> <code>{payMethod}</code> <code>{loyaltyMsg}</code></div>
-      <textarea id="sms-tpl" rows="4" style="resize:vertical;font-size:12px;line-height:1.6" oninput="el('tpl-len').textContent=this.value.length+' characters'">${CFG.sms.template}</textarea>
-      <div style="font-size:10px;color:var(--ink3);margin-top:3px" id="tpl-len">${CFG.sms.template.length} characters</div>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <button class="btn bs bsm" onclick="el('sms-tpl').value=CFG.sms.template">↺ Reset</button>
-        <button class="btn bp bsm" onclick="CFG.sms.template=el('sms-tpl').value;toast('Template saved!','ok')">Save Template</button>
-        <button class="btn bpk bsm" onclick="previewSmsTemplate()">👁 Preview</button>
-      </div>
+      <div class="sec" style="font-size:12px;margin-bottom:6px">Message Preview</div>
+      <div style="background:#f0fdf4;border-radius:var(--r2);padding:14px;font-size:12px;line-height:1.8;white-space:pre-wrap;border:1.5px solid #a7f3d0">*${CFG.bizName}* - Invoice Receipt
+
+Hi [Customer Name]! 🚗
+Your vehicle *[PLATE]* wash is complete.
+
+📋 *Invoice: INV-001*
+📅 Date: Today
+🔧 Services: [Services]
+💰 Total: *₹X,XXX*
+💳 Payment: Cash ✅
+
+💜 Loyalty Points Earned: XX
+
+Thank you for choosing ${CFG.bizName}! 🙏</div>
     </div>`;
   } else if(section==='sms-logs'){
     const logs=CFG.sms.logs;
@@ -4365,7 +4469,7 @@ function buildCJRow(l){
       </div>
       <div class="row g8 mt3" style="border-top:1px solid var(--line);padding-top:11px">
         <button class="btn bp bsm" onclick="openSlReceipt('${l.id}')">🖨 Receipt</button>
-        ${cust?.phone?`<button class="btn bpk bsm" onclick="sendSMS('${l.id}')">📱 SMS</button>`:''}
+        ${cust?.phone?`<button class="btn bpk bsm" onclick="sendSMS('${l.id}')">💬 WhatsApp</button>`:''}
         ${!l.paid?`<button class="btn bg2 bsm" onclick="openSlPayment('${l.id}')">💳 Payment</button>`:''}
         <button class="btn bcy bsm" onclick="gp('service-log',document.querySelector('.ni[onclick*=service]'));setTimeout(()=>{},200)">→ Service Log</button>
       </div>
