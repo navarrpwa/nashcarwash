@@ -1959,41 +1959,99 @@ function openCamScan(){
 }
 function closeCamS(){if(window._cs){window._cs.getTracks().forEach(t=>t.stop());window._cs=null;}closeModal();}
 function capPlate(){
-  el('cst').textContent='Reading plate…';
+  el('cst').textContent='📸 Reading plate…';
+  el('ccap').disabled=true;
   const video=document.getElementById('camv');
-  // Try to read from video frame using canvas
-  try {
-    const canvas=document.createElement('canvas');
-    canvas.width=video.videoWidth||640;
-    canvas.height=video.videoHeight||480;
-    const ctx=canvas.getContext('2d');
-    ctx.drawImage(video,0,0);
-    // Show capture feedback — user must type the plate they see
-    el('cst').textContent='📸 Captured! Enter the plate number you see:';
-    // Show manual input field
-    const existingInput=document.getElementById('cap-manual');
-    if(!existingInput){
-      const inp=document.createElement('div');
-      inp.id='cap-manual';
-      inp.style.cssText='margin-top:10px;display:flex;gap:8px;';
-      inp.innerHTML='<input id="cap-plate-input" type="text" placeholder="e.g. KL07AB1234" style="flex:1;padding:10px;border:2px solid var(--blue);border-radius:8px;font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:2px" oninput="this.value=this.value.toUpperCase()">'
-        +'<button onclick="useManualPlate()" style="padding:10px 16px;background:var(--blue);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer">✓ Use</button>';
-      document.getElementById('cres').parentNode.insertBefore(inp, document.getElementById('cres'));
-    }
-    document.getElementById('cap-plate-input')?.focus();
-    el('cres').style.display='none';
-    el('cuse').style.display='none';
-  } catch(e) {
-    el('cst').textContent='Enter plate manually:';
+  if(!video||!video.videoWidth){
+    el('cst').textContent='⚠ Camera not ready — try again';
+    el('ccap').disabled=false;
+    return;
+  }
+  // Capture frame to canvas
+  const canvas=document.createElement('canvas');
+  canvas.width=video.videoWidth;
+  canvas.height=video.videoHeight;
+  canvas.getContext('2d').drawImage(video,0,0);
+
+  // Load Tesseract.js OCR (lightweight WASM-based)
+  if(!window.Tesseract){
+    el('cst').textContent='Loading OCR engine…';
+    const s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    s.onload=()=>runOCR(canvas);
+    s.onerror=()=>showManualInput('OCR failed — enter plate manually');
+    document.head.appendChild(s);
+  } else {
+    runOCR(canvas);
   }
 }
+
+async function runOCR(canvas){
+  try {
+    el('cst').textContent='🔍 Reading plate text…';
+    // Crop to the green box area (center 72% width, middle area)
+    const crop=document.createElement('canvas');
+    const cx=Math.floor(canvas.width*0.14);
+    const cy=Math.floor(canvas.height*0.3);
+    const cw=Math.floor(canvas.width*0.72);
+    const ch=Math.floor(canvas.height*0.4);
+    crop.width=cw; crop.height=ch;
+    const ctx=crop.getContext('2d');
+    // Enhance contrast for better OCR
+    ctx.filter='contrast(2) brightness(1.2) grayscale(1)';
+    ctx.drawImage(canvas,cx,cy,cw,ch,0,0,cw,ch);
+
+    const worker=await Tesseract.createWorker('eng');
+    await worker.setParameters({
+      tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+      tessedit_pageseg_mode:'7', // Single line
+    });
+    const {data:{text}}=await worker.recognize(crop);
+    await worker.terminate();
+
+    // Clean OCR result — remove spaces and special chars, uppercase
+    const raw=text.replace(/[^A-Z0-9]/g,'').trim().toUpperCase();
+    if(raw.length>=4){
+      window._cp=raw;
+      el('cpl').textContent=raw;
+      el('cres').style.display='block';
+      el('cuse').style.display='flex';
+      el('cuse').style.display='inline-flex';
+      el('cst').textContent='✓ Plate detected! Tap Use Plate or retake';
+    } else {
+      showManualInput('Could not read plate clearly — enter manually');
+    }
+  } catch(e) {
+    showManualInput('OCR error — enter plate manually');
+  }
+  el('ccap').disabled=false;
+}
+
+function showManualInput(msg){
+  el('cst').textContent=msg||'Enter plate manually:';
+  el('ccap').disabled=false;
+  const existing=document.getElementById('cap-manual');
+  if(!existing){
+    const div=document.createElement('div');
+    div.id='cap-manual';
+    div.style.cssText='margin-top:8px;display:flex;gap:8px;align-items:center';
+    div.innerHTML='<input id="cap-plate-input" type="text" placeholder="e.g. KL04AP1424" '
+      +'style="flex:1;padding:10px;border:2px solid var(--blue);border-radius:8px;font-size:15px;font-weight:700;text-transform:uppercase;letter-spacing:2px" '
+      +'oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,\'\')" maxlength="12">'
+      +'<button onclick="useManualPlate()" style="padding:10px 14px;background:var(--blue);color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer;white-space:nowrap">Use</button>';
+    const cres=document.getElementById('cres');
+    cres.parentNode.insertBefore(div,cres);
+    setTimeout(()=>document.getElementById('cap-plate-input')?.focus(),100);
+  }
+}
+
 function useManualPlate(){
-  const val=document.getElementById('cap-plate-input')?.value?.trim().toUpperCase();
-  if(!val||val.length<3){alert('Enter a valid plate number');return;}
+  const val=(document.getElementById('cap-plate-input')?.value||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(!val||val.length<3){toast('Enter a valid plate number','e');return;}
   window._cp=val;
   el('cpl').textContent=val;
   el('cres').style.display='block';
-  el('cuse').style.display='flex';
+  el('cuse').style.display='inline-flex';
   el('cst').textContent='✓ Plate ready!';
 }
 function usePlate(){if(window._cp&&el('wiz-plate')){el('wiz-plate').value=window._cp;onPlate();}closeCamS();}
