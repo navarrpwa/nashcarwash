@@ -11,7 +11,7 @@
 <title>QuickWash Enterprise</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;font-family:'Plus Jakarta Sans',sans-serif} body{overflow:hidden;height:100vh;width:100vw}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;font-family:'Plus Jakarta Sans',sans-serif}
 :root{
   --bg:#F1F5F9;--white:#fff;--surf:#F8FAFC;
   --blue:#2563EB;--blt:#EFF6FF;--bdk:#1D4ED8;
@@ -26,8 +26,7 @@
   --sh:0 1px 3px rgba(0,0,0,.07);--shm:0 4px 12px rgba(0,0,0,.08);--shl:0 8px 24px rgba(0,0,0,.12);
   --r:8px;--r2:12px;--r3:16px;--r4:20px;
 }
-html,body{height:100%;overflow:hidden}
-body{background:var(--bg);color:var(--ink);font-size:14px;display:flex;height:100vh;width:100vw;overflow:hidden;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-size:14px;display:flex;height:100vh;overflow:hidden;margin:0;padding:0}
 ::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:4px}
 
 /* LOGIN */
@@ -304,20 +303,9 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
 #sb-ov.on{display:block}
 @media(max-width:767px){
   #mb{display:flex!important}
-  #sb{
-    position:fixed!important;
-    left:-240px!important;
-    top:0!important;
-    height:100%!important;
-    width:230px!important;
-    min-width:230px!important;
-    max-width:230px!important;
-    z-index:200!important;
-    transition:left .25s ease!important;
-  }
+  #sb{position:fixed!important;left:-240px!important;top:0!important;width:230px!important;min-width:230px!important;max-width:230px!important;height:100vh!important;z-index:200!important;transition:left .25s ease!important;border-right:1px solid var(--line)!important}
   #sb.open{left:0!important;box-shadow:4px 0 20px rgba(0,0,0,.25)!important}
-  #sb-ov{display:block!important}
-  #main{width:100%!important}
+  #main{flex:1!important}
   .tb{padding:0 12px!important}
   .tb h1{font-size:14px!important}
   .tb-dt{display:none!important}
@@ -328,11 +316,14 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
   .modal{border-radius:12px 12px 0 0!important;max-height:90vh!important;width:100%!important;margin:0!important;max-width:100%!important}
   .vtype-grid{grid-template-columns:repeat(2,1fr)!important}
   .pm-grid{grid-template-columns:repeat(2,1fr)!important}
-  .tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .tw{overflow-x:auto}
   .row.aic.jb{flex-wrap:wrap;gap:8px}
 }
 @media(max-width:480px){
   .g4,.g3,.g5{grid-template-columns:1fr!important}
+  .tb h1{font-size:13px!important}
+}
+
   .vtype-grid{grid-template-columns:1fr 1fr!important}
   .tb h1{font-size:13px!important}
 }
