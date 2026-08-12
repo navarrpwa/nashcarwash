@@ -4293,7 +4293,7 @@ function renderCJ(){
 
 function buildCJRow(l){
   const cust=S.customers.find(c=>c.id===l.custId);
-  const inv='INV-'+String(l.id).padStart(6,'0');
+  const inv = l.invoiceNo || l.jobNumber || ('INV-'+String(l.id).slice(-6).toUpperCase());
   const cat=l.vcat||'Sedan';
   // Use stored amount from DB — don't recalculate (prices may differ by config)
   const storedTotal = parseFloat(l.amount||l.total||0);
@@ -4342,10 +4342,10 @@ function buildCJRow(l){
     </div>
     <div class="cj-bd" id="cj-bd-${l.id}">
       <div class="cj-grid mb3">
-        <div><div class="cj-f">Job #</div><div class="cj-v">${String(l.id).padStart(6,'0')}</div></div>
+        <div><div class="cj-f">Job #</div><div class="cj-v">${l.jobNumber||('JOB-'+String(l.id).slice(-6).toUpperCase())}</div></div>
         <div><div class="cj-f">Invoice</div><div class="cj-v" style="color:var(--blue)">${inv}</div></div>
-        <div><div class="cj-f">Vehicle Type</div><div class="cj-v">${l.vtype?VEHICLE_TYPES.find(v=>v.id===l.vtype)?.label||l.vtype:'—'}</div></div>
-        <div><div class="cj-f">Category</div><div class="cj-v">${l.vcat||'—'}</div></div>
+        <div><div class="cj-f">Vehicle Type</div><div class="cj-v">${l.vtypeLabel||VEHICLE_TYPES.find(v=>v.id===l.vtype)?.label||(!isUUID(l.vtype)?l.vtype:'')||'—'}</div></div>
+        <div><div class="cj-f">Category</div><div class="cj-v">${l.vcatName||(!isUUID(l.vcat)?l.vcat:'')||'—'}</div></div>
         <div><div class="cj-f">Model</div><div class="cj-v">${l.model||'—'}</div></div>
         <div><div class="cj-f">Staff</div><div class="cj-v">${l.staff||'—'}</div></div>
         <div><div class="cj-f">Duration</div><div class="cj-v">${dur}</div></div>
@@ -5339,53 +5339,91 @@ async function sbBootstrapApp() {
 
 // ── SERVICE LOGS ─────────────────────────────────────────────
 async function sbRefreshServiceLogs() {
-  const { data } = await QB.loadServiceLogs({ limit: 200 });
+  const { data, error } = await sbQ('service_logs')
+    .select('*, vehicle_types(label,code), vehicle_categories(name), service_log_services(service_name,price,qty), customers(name,phone)')
+    .order('entered_at', {ascending:false})
+    .limit(200);
+  if(error){ console.warn('[DB] sbRefreshServiceLogs:',error.message); return; }
   S.sl = (data||[]).map(l => {
-    const mapped = mapDbLog(l);
-    // Ensure amount is always a valid number from DB
-    mapped.amount = parseFloat(l.amount || l.total || 0);
-    mapped.total = mapped.amount;
+    const flat = {...l,
+      vehicle_type_label: l.vehicle_types?.label||'',
+      vehicle_cat_name:   l.vehicle_categories?.name||'',
+      customer_name:      l.customers?.name||'',
+      customer_phone:     l.customers?.phone||'',
+      services:           l.service_log_services||[],
+    };
+    const mapped = mapDbLog(flat);
+    mapped.amount = parseFloat(l.amount||0);
+    mapped.total  = mapped.amount;
     return mapped;
   });
-  // Populate S.txns from service logs for dashboard local calculations
   S.txns = S.sl.filter(l=>l.paid).map(l=>({
-    id: l.id, rcpt: l.invoiceNo||l.jobNumber, type:'wash',
-    plate: l.plate, svcs: l.svcs||[], tot: l.total||l.amount||0,
-    pay: l.pay||'cash', status:'completed',
-    date: l.deliveredAt||l.enteredAt, custId: l.custId
+    id:l.id, rcpt:l.invoiceNo||l.jobNumber, type:'wash',
+    plate:l.plate, svcs:l.svcs||[], tot:l.amount||0,
+    pay:l.pay||'cash', status:'completed',
+    date:l.deliveredAt||l.enteredAt, custId:l.custId
   }));
 }
 
 async function sbRefreshCompletedJobs() {
-  const { data } = await QB.loadServiceLogs({
-    status: '', limit: 200
-  });
-  S.sl = data.map(mapDbLog);
+  await sbRefreshServiceLogs();
 }
 
 function mapDbLog(l) {
-  const svcs = Array.isArray(l.services) ? l.services : [];
-  const pmts  = Array.isArray(l.payment_details) ? l.payment_details : [];
+  const svcs = Array.isArray(l.services) ? l.services :
+                (Array.isArray(l.service_log_services) ? l.service_log_services : []);
+  const pmts  = Array.isArray(l.payment_details) ? l.payment_details :
+                (Array.isArray(l.service_log_payments) ? l.service_log_payments : []);
   const edits = Array.isArray(l.edit_history) ? l.edit_history : [];
+
+  // Resolve vehicle type UUID → label
+  let vtypeLabel = l.vehicle_type_label || l.vtype_label || '';
+  let vcatName   = l.vehicle_cat_name   || l.vcat_name   || '';
+  if(!vtypeLabel && l.vehicle_type_id){
+    const vt = S._vtypes?.find(v=>v.id===l.vehicle_type_id||v.code===l.vehicle_type_id);
+    vtypeLabel = vt?.label || '';
+  }
+  if(!vcatName && l.vehicle_cat_id){
+    const allCats = (S._vtypes||[]).flatMap(v=>v.vehicle_categories||[]);
+    const vc = allCats.find(c=>c.id===l.vehicle_cat_id);
+    vcatName = vc?.name || '';
+  }
+  // Use vtype/vcat directly if they're already human-readable (not UUIDs)
+  const vtypeRaw = l.vehicle_type_id || '';
+  const vcatRaw  = l.vehicle_cat_id  || '';
+  const vtypeFinal = vtypeLabel || (!isUUID(vtypeRaw) ? vtypeRaw : '');
+  const vcatFinal  = vcatName  || (!isUUID(vcatRaw)  ? vcatRaw  : '');
+
+  // Generate readable job number if missing
+  const jobNum = l.job_number || ('JOB-' + String(l.id||'').slice(-6).toUpperCase());
+  const invNum = l.invoice_no || l.job_number || ('INV-' + String(l.id||'').slice(-6).toUpperCase());
+
   return {
-    id: l.id, jobNumber: l.job_number, invoiceNo: l.invoice_no || l.job_number,
-    plate: l.plate, model: l.model, vtype: l.vehicle_type_id, vcat: l.vehicle_cat_id,
-    vtypeLabel: l.vehicle_type_label, vcatName: l.vehicle_cat_name,
+    id: l.id, _dbId: l.id,
+    jobNumber: jobNum, invoiceNo: invNum,
+    plate: l.plate, model: l.model||'',
+    vtype: vtypeFinal || vtypeRaw, vcat: vcatFinal || vcatRaw,
+    vtypeLabel: vtypeFinal, vcatName: vcatFinal,
     custId: l.customer_id,
-    custName: l.customer_name, custPhone: l.customer_phone,
-    svcs: svcs.map(s => s.service_name || s.name),
+    custName: l.customer_name||l.custName||'Walk-in',
+    custPhone: l.customer_phone||l.custPhone||'',
+    svcs: svcs.map(s=>s.service_name||s.name||'').filter(Boolean),
     svcDetails: svcs,
-    amount: parseFloat(l.amount||l.total||l.subtotal||0), disc: parseFloat(l.discount || 0),
-    tax: parseFloat(l.tax || 0), total: parseFloat(l.total || l.amount),
-    status: l.status, pay: l.pay_method, payDetail: pmts,
-    paid: l.paid, ptsEarned: l.pts_earned, ptsRedeemed: l.pts_redeemed,
-    staff: l.staff_name, notes: l.notes, smsStatus: l.sms_status,
-    estimatedMins: l.estimated_mins,
+    amount: parseFloat(l.amount||l.total||l.subtotal||0),
+    disc: parseFloat(l.discount||0),
+    tax: parseFloat(l.tax||0),
+    total: parseFloat(l.amount||l.total||0),
+    status: l.status||'waiting',
+    pay: l.pay_method||'cash', payDetail: pmts,
+    paid: l.paid||false,
+    ptsEarned: l.pts_earned||0, ptsRedeemed: l.pts_redeemed||0,
+    staff: l.staff_name||'', notes: l.notes||'', smsStatus: l.sms_status||'',
+    estimatedMins: l.estimated_mins||0,
     enteredAt: l.entered_at, receivedAt: l.received_at,
     washingAt: l.washing_at, interiorAt: l.interior_at,
     detailingAt: l.detailing_at, qcAt: l.qc_at,
     readyAt: l.ready_at, deliveredAt: l.delivered_at, cancelledAt: l.cancelled_at,
-    editHistory: edits.map(e => ({ by: e.by, action: e.action, at: e.at }))
+    editHistory: edits.map(e=>({by:e.by||e.edited_by,action:e.action,at:e.at||e.edited_at}))
   };
 }
 
