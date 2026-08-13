@@ -2901,6 +2901,40 @@ function testWhatsApp(){
   dispatchWhatsApp('test', encodeURIComponent(phone), encodeURIComponent(msg));
 }
 
+async function saveWhatsAppSettings(){
+  const token = document.getElementById('wa-token-inp')?.value?.trim();
+  const phoneId = el('wa-phoneid-inp')?.value?.trim();
+  const bizName = el('wa-bizname-inp')?.value?.trim();
+  CFG.sms.waToken   = token   || CFG.sms.waToken;
+  CFG.sms.waPhoneId = phoneId || CFG.sms.waPhoneId;
+  if(bizName) CFG.sms.senderId = bizName;
+  try {
+    // Save all WhatsApp config to app_config table
+    const saves = [
+      sbQ('app_config').upsert({key:'wa_token',   value:CFG.sms.waToken},   {onConflict:'key'}),
+      sbQ('app_config').upsert({key:'wa_phone_id', value:CFG.sms.waPhoneId},{onConflict:'key'}),
+      sbQ('app_config').upsert({key:'wa_biz_name', value:CFG.sms.senderId}, {onConflict:'key'}),
+      sbQ('app_config').upsert({key:'wa_enabled',  value:String(CFG.sms.enabled)},{onConflict:'key'}),
+    ];
+    await Promise.all(saves);
+    toast('WhatsApp settings saved ✓','ok');
+    renderAdm();
+  } catch(e){
+    // Fallback: try insert/update individually
+    try {
+      for(const [k,v] of [['wa_token',CFG.sms.waToken],['wa_phone_id',CFG.sms.waPhoneId],['wa_biz_name',CFG.sms.senderId]]){
+        const {data} = await sbQ('app_config').select('key').eq('key',k);
+        if(data&&data.length) await sbQ('app_config').update({value:v}).eq('key',k);
+        else await sbQ('app_config').insert({key:k,value:v});
+      }
+      toast('WhatsApp settings saved ✓','ok');
+      renderAdm();
+    } catch(e2){
+      toast('Saved locally — DB error: '+e2.message,'w');
+    }
+  }
+}
+
 // ── Edit history logger ──
 function logEdit(l,action){
   if(!l.editHistory)l.editHistory=[];
@@ -3856,7 +3890,7 @@ function renderAdm(){
 
       <div class="g2" style="gap:10px">
         <div class="fg"><label>WhatsApp Phone Number ID</label>
-          <input type="text" value="${CFG.sms.waPhoneId||''}" oninput="CFG.sms.waPhoneId=this.value"
+          <input type="text" id="wa-phoneid-inp" value="${CFG.sms.waPhoneId||''}" oninput="CFG.sms.waPhoneId=this.value"
             placeholder="From Meta Developer Console">
           <div style="font-size:10px;color:var(--ink3);margin-top:3px">Found in WhatsApp → Getting Started in Meta dashboard</div>
         </div>
@@ -3868,12 +3902,12 @@ function renderAdm(){
       </div>
 
       <div class="fg mt3"><label>Business Display Name</label>
-        <input type="text" value="${CFG.sms.senderId||CFG.bizName}" oninput="CFG.sms.senderId=this.value"
+        <input type="text" id="wa-bizname-inp" value="${CFG.sms.senderId||CFG.bizName}" oninput="CFG.sms.senderId=this.value"
           placeholder="${CFG.bizName}">
       </div>
 
       <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
-        <button class="btn bp bsm" onclick="CFG.sms.waToken=document.getElementById('wa-token-inp').value;dbSave('saveConfig',['wa_token',CFG.sms.waToken],'WhatsApp token').catch(()=>{});toast('WhatsApp settings saved ✓','ok')">
+        <button class="btn bp bsm" onclick="saveWhatsAppSettings()">
           💾 Save Settings
         </button>
         <button class="btn bs bsm" onclick="testWhatsApp()">📤 Send Test Message</button>
@@ -5311,6 +5345,14 @@ async function sbBootstrapApp() {
       cctvRetention: parseInt(cfg.cctv_retention) || CFG.cctvRetention,
       cctvScanInterval: parseInt(cfg.cctv_scan_interval) || CFG.cctvScanInterval,
     });
+
+    // Load WhatsApp settings from DB
+    if(cfg.wa_token)    CFG.sms.waToken   = cfg.wa_token;
+    if(cfg.wa_phone_id) CFG.sms.waPhoneId = cfg.wa_phone_id;
+    if(cfg.wa_biz_name) CFG.sms.senderId  = cfg.wa_biz_name;
+    if(cfg.wa_enabled !== undefined) CFG.sms.enabled = cfg.wa_enabled !== 'false';
+    if(cfg.anpr_provider) CFG.anprProvider = cfg.anpr_provider;
+    if(cfg.plate_recognizer_key) CFG.plateRecognizerKey = cfg.plate_recognizer_key;
 
     // Map vehicle types into existing format
     S._vtypes = vtypes;
