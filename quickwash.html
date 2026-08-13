@@ -529,7 +529,7 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
                 <div style="font-size:12px;font-weight:800;color:var(--amber);margin-bottom:10px">⚡ Quick Add Customer</div>
                 <div class="g2" style="gap:8px">
                   <div class="fg" style="margin:0"><label>Name *</label><input type="text" id="qa-n" placeholder="Customer name"></div>
-                  <div class="fg" style="margin:0"><label>Mobile *</label><input type="tel" id="qa-p" placeholder="9876543210" maxlength="10"></div>
+                  <div class="fg" style="margin:0"><label>Mobile *</label><input type="tel" id="qa-p" placeholder="9876543210" maxlength="13" oninput="this.value=this.value.replace(/[^0-9+]/g,'')"></div>
                 </div>
                 <button class="btn bp mt3 bfull" onclick="saveQA()" style="margin-top:10px">✓ Save & Continue</button>
               </div>
@@ -2822,10 +2822,13 @@ async function dispatchWhatsApp(logId, encodedPhone, encodedMsg, silent=false){
   const msg=decodeURIComponent(encodedMsg);
   if(!silent) closeModal();
 
-  // Format phone: ensure starts with country code
-  const formattedPhone = phone.startsWith('+') ? phone.slice(1) :
-                         phone.startsWith('0')  ? '91'+phone.slice(1) :
-                         phone.length===10       ? '91'+phone : phone;
+  // Format phone for WhatsApp API: needs country code, no + sign
+  let formattedPhone = phone.replace(/[^0-9]/g,''); // remove all non-digits
+  if(formattedPhone.startsWith('0')) formattedPhone='91'+formattedPhone.slice(1);
+  if(formattedPhone.length===10) formattedPhone='91'+formattedPhone; // add India code
+  if(formattedPhone.startsWith('91') && formattedPhone.length!==12) formattedPhone=formattedPhone; // keep as is
+  // Final check
+  if(formattedPhone.length < 10) { toast('Invalid phone number','e'); return; }
 
   // Log the attempt
   const logEntry={id:CFG.sms.logs.length+1,logId,phone:formattedPhone,text:msg,
@@ -2868,7 +2871,11 @@ async function dispatchWhatsApp(logId, encodedPhone, encodedMsg, silent=false){
       l.smsStatus='sent';
       toast('💬 WhatsApp receipt sent to '+formattedPhone.slice(-4).padStart(10,'*'),'ok');
     } else {
-      throw new Error(result.error?.message||'Send failed');
+      const errMsg = result.error?.message||'Send failed';
+    if(errMsg.includes('token') || result.error?.code===190){
+      throw new Error('Access token expired — generate a new token in Meta Developer Console');
+    }
+    throw new Error(errMsg);
     }
   } catch(e){
     console.error('[WhatsApp]',e.message);
@@ -2950,7 +2957,7 @@ function rmProd(id){S.posCart=S.posCart.filter(x=>String(x.id)!==String(id));ren
 function posct(){const tot=S.posCart.reduce((a,i)=>a+((i.sellingPrice||i.selling_price||0)*i.qty),0)-(parseFloat(el('posdisc')?.value)||0);if(el('postot'))el('postot').textContent=frs(Math.max(0,tot));}
 function searchPC(){const q=el('pos-cq')?.value.toLowerCase()||'';const r=el('pos-cr');if(!q){r.style.display='none';return;}const f=S.customers.filter(c=>c.name.toLowerCase().includes(q)||c.phone.includes(q));if(!f.length){r.style.display='none';return;}r.style.display='block';r.innerHTML=f.map(c=>`<div onclick="selPC('${c.id}')" style="padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--line)">${c.name} <span style="color:var(--ink3)">${c.phone}</span></div>`).join('');}
 function selPC(id){const c=S.customers.find(x=>x.id===id);if(!c)return;S.posCust=c;el('pos-cq').value='';el('pos-cr').style.display='none';el('pos-cs').textContent=c.name+' — '+c.phone;el('pos-cs').style.display='block';if(CFG.loyaltyEnabled&&c.points>0){el('pos-loyalty').style.display='block';el('pos-loyalty').innerHTML=`💜 ${c.name} has <strong>${c.points} pts</strong> (${frs(c.points*CFG.pointValue)} value)`;}}
-function openQAC(){openModal(`${mhd('+New Customer')}<div class="fg"><label>Name *</label><input type="text" id="qac-n"></div><div class="fg"><label>Phone *</label><input type="tel" id="qac-p" maxlength="10"></div><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveQAC()">Add</button></div>`);}
+function openQAC(){openModal(`${mhd('+New Customer')}<div class="fg"><label>Name *</label><input type="text" id="qac-n"></div><div class="fg"><label>Phone * <span style="font-size:10px;color:var(--ink3)">(10 digits)</span></label><input type="tel" id="qac-p" maxlength="13" placeholder="9876543210" oninput="this.value=this.value.replace(/[^0-9+]/g,'')"></div><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveQAC()">Add</button></div>`);}
 async function saveQAC(){
   const n=el('qac-n')?.value.trim(), p=el('qac-p')?.value.trim();
   if(!n||!p){toast('Name and phone required','e');return;}
@@ -3045,7 +3052,7 @@ function _renderCustsInner(){
 function openCM(id=null){
   const c=id?S.customers.find(x=>x.id===id):null;
   openModal(`${mhd((c?'Edit':'Add')+' Customer')}
-    <div class="g2" style="gap:8px"><div class="fg"><label>Full Name *</label><input type="text" id="cm-n" value="${c?.name||''}"></div><div class="fg"><label>Phone *</label><input type="tel" id="cm-p" value="${c?.phone||''}" maxlength="10"></div></div>
+    <div class="g2" style="gap:8px"><div class="fg"><label>Full Name *</label><input type="text" id="cm-n" value="${c?.name||''}"></div><div class="fg"><label>Phone * <span style="font-size:10px;color:var(--ink3);font-weight:400">(10 digits or +91XXXXXXXXXX)</span></label><input type="tel" id="cm-p" value="${c?.phone||''}" maxlength="13" placeholder="9876543210" oninput="this.value=this.value.replace(/[^0-9+]/g,'')"></div></div>
     <div class="fg"><label>Email</label><input type="email" id="cm-e" value="${c?.email||''}"></div>
     <div class="fg"><label>Plates (comma separated)</label><input type="text" id="cm-pl" value="${c?c.plates.join(', '):''}"></div>
     <div class="fg"><label>Notes</label><textarea id="cm-nt" rows="2" style="resize:none">${c?.notes||''}</textarea></div>
@@ -3054,6 +3061,10 @@ function openCM(id=null){
 async function saveCM(id){
   const n=el('cm-n')?.value.trim(), p=el('cm-p')?.value.trim();
   if(!n||!p){toast('Name and phone required','e');return;}
+  let phone_raw=el('cm-p')?.value?.replace(/[^0-9+]/g,'')||'';
+  // Normalize: store as 10 digits locally, add country code when sending WhatsApp
+  if(phone_raw.startsWith('+91') && phone_raw.length===13) phone_raw=phone_raw.slice(3);
+  if(phone_raw.startsWith('91') && phone_raw.length===12) phone_raw=phone_raw.slice(2);
   const email=el('cm-e')?.value||'';
   const notes=el('cm-nt')?.value||'';
   const pls=(el('cm-pl')?.value||'').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean);
