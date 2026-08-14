@@ -1665,10 +1665,12 @@ const CFG={
     enabled:true,
     provider:'whatsapp', // 'demo'|'whatsapp'|'twilio'|'msg91'
     // WhatsApp Business API (Meta)
-    waToken:'',        // Meta WhatsApp API token (from Meta Developer Console)
+    waToken:'',        // Meta WhatsApp API token
     waPhoneId:'',      // WhatsApp Business Phone Number ID
-    waTemplateName:'invoice_receipt', // Message template name (must be approved in Meta)
-    waLanguage:'en',   // Template language
+    waProvider:'twilio', // 'twilio' | 'meta' | 'open' (open WhatsApp app)
+    twilioSid:'',      // Twilio Account SID
+    twilioToken:'',    // Twilio Auth Token
+    twilioFrom:'whatsapp:+14155238886', // Twilio sandbox number
     apiKey:'',
     senderId:'QWASH',
     autoSendOnComplete:true,
@@ -2817,76 +2819,82 @@ Thank you for choosing ${CFG.bizName}! 🙏`;
 }
 
 async function dispatchWhatsApp(logId, encodedPhone, encodedMsg, silent=false){
-  const l=S.sl.find(x=>x.id===logId); if(!l) return;
-  const phone=decodeURIComponent(encodedPhone).replace(/[^0-9+]/g,'');
-  const msg=decodeURIComponent(encodedMsg);
+  const l = logId==='test' ? {id:'test',smsStatus:''} : S.sl.find(x=>x.id===logId);
+  if(!l) return;
+  const phone = decodeURIComponent(encodedPhone).replace(/[^0-9+]/g,'');
+  const msg   = decodeURIComponent(encodedMsg);
   if(!silent) closeModal();
 
-  // Format phone for WhatsApp API: needs country code, no + sign
-  let formattedPhone = phone.replace(/[^0-9]/g,''); // remove all non-digits
-  if(formattedPhone.startsWith('0')) formattedPhone='91'+formattedPhone.slice(1);
-  if(formattedPhone.length===10) formattedPhone='91'+formattedPhone; // add India code
-  if(formattedPhone.startsWith('91') && formattedPhone.length!==12) formattedPhone=formattedPhone; // keep as is
-  // Final check
-  if(formattedPhone.length < 10) { toast('Invalid phone number','e'); return; }
+  // Format: ensure country code, no + sign
+  let fp = phone.replace(/[^0-9]/g,'');
+  if(fp.startsWith('0'))  fp = '91' + fp.slice(1);
+  if(fp.length === 10)    fp = '91' + fp;
+  if(fp.length < 10) { toast('Invalid phone number','e'); return; }
 
-  // Log the attempt
-  const logEntry={id:CFG.sms.logs.length+1,logId,phone:formattedPhone,text:msg,
-    status:'sending',at:new Date().toISOString(),attempts:1};
+  const logEntry = {id:CFG.sms.logs.length+1, logId, phone:fp, text:msg,
+    status:'sending', at:new Date().toISOString()};
   CFG.sms.logs.unshift(logEntry);
 
-  try {
-    if(!CFG.sms.waToken || !CFG.sms.waPhoneId){
-      // No API configured — open WhatsApp web as fallback
-      const waUrl='https://wa.me/'+formattedPhone+'?text='+encodeURIComponent(msg);
-      window.open(waUrl,'_blank');
-      logEntry.status='opened';
-      l.smsStatus='sent';
-      toast('💬 WhatsApp opened — tap Send in WhatsApp','ok');
-      renderSL();
-      return;
-    }
+  const provider = CFG.sms.waProvider || 'open';
 
-    // Meta WhatsApp Business API
-    // Send text message (freeform allowed within 24hr window)
-    const resp = await fetch(
-      'https://graph.facebook.com/v18.0/'+CFG.sms.waPhoneId+'/messages',{
-        method:'POST',
-        headers:{
-          'Authorization':'Bearer '+CFG.sms.waToken,
-          'Content-Type':'application/json'
-        },
-        body: JSON.stringify({
-          messaging_product:'whatsapp',
-          to: formattedPhone,
-          type:'text',
-          text:{ body: msg }
-        })
+  try {
+    if(provider==='twilio' && CFG.sms.twilioSid && CFG.sms.twilioToken){
+      // ── Twilio WhatsApp ──────────────────────────────────────
+      const from  = CFG.sms.twilioFrom || 'whatsapp:+14155238886';
+      const to    = 'whatsapp:+' + fp;
+      const creds = btoa(CFG.sms.twilioSid + ':' + CFG.sms.twilioToken);
+      const body  = new URLSearchParams({ From:from, To:to, Body:msg });
+      const resp  = await fetch(
+        'https://api.twilio.com/2010-04-01/Accounts/'+CFG.sms.twilioSid+'/Messages.json',
+        { method:'POST',
+          headers:{ 'Authorization':'Basic '+creds,
+            'Content-Type':'application/x-www-form-urlencoded' },
+          body }
+      );
+      const result = await resp.json();
+      if(resp.ok && result.sid){
+        logEntry.status='sent'; l.smsStatus='sent';
+        toast('💬 WhatsApp sent via Twilio ✓','ok');
+        console.log('[Twilio] Message SID:',result.sid);
+      } else {
+        throw new Error(result.message||result.error_message||'Twilio error '+resp.status);
       }
-    );
-    const result=await resp.json();
-    if(resp.ok && result.messages){
-      logEntry.status='sent';
-      logEntry.deliveredAt=new Date().toISOString();
-      l.smsStatus='sent';
-      toast('💬 WhatsApp receipt sent to '+formattedPhone.slice(-4).padStart(10,'*'),'ok');
+
+    } else if(provider==='meta' && CFG.sms.waToken && CFG.sms.waPhoneId){
+      // ── Meta Cloud API ───────────────────────────────────────
+      const resp = await fetch(
+        'https://graph.facebook.com/v18.0/'+CFG.sms.waPhoneId+'/messages',
+        { method:'POST',
+          headers:{ 'Authorization':'Bearer '+CFG.sms.waToken,
+            'Content-Type':'application/json' },
+          body: JSON.stringify({ messaging_product:'whatsapp', to:fp,
+            type:'text', text:{body:msg} })
+        }
+      );
+      const result = await resp.json();
+      if(resp.ok && result.messages){
+        logEntry.status='sent'; l.smsStatus='sent';
+        toast('💬 WhatsApp sent via Meta ✓','ok');
+      } else {
+        const em = result.error?.message||'Meta API error';
+        if(result.error?.code===190) throw new Error('Token expired — regenerate in Meta console');
+        throw new Error(em);
+      }
+
     } else {
-      const errMsg = result.error?.message||'Send failed';
-    if(errMsg.includes('token') || result.error?.code===190){
-      throw new Error('Access token expired — generate a new token in Meta Developer Console');
-    }
-    throw new Error(errMsg);
+      // ── Open WhatsApp app ────────────────────────────────────
+      window.open('https://wa.me/'+fp+'?text='+encodeURIComponent(msg),'_blank');
+      logEntry.status='opened'; l.smsStatus='sent';
+      toast('💬 WhatsApp opened — tap Send','ok');
     }
   } catch(e){
     console.error('[WhatsApp]',e.message);
-    logEntry.status='failed';
-    l.smsStatus='failed';
-    // Fallback: open WhatsApp web
-    const waUrl='https://wa.me/'+formattedPhone+'?text='+encodeURIComponent(msg);
-    window.open(waUrl,'_blank');
-    toast('💬 API failed — WhatsApp opened manually','w');
+    logEntry.status='failed'; l.smsStatus='failed';
+    toast('💬 Send failed: '+e.message,'e');
+    // Fallback: always open WhatsApp
+    window.open('https://wa.me/'+fp+'?text='+encodeURIComponent(msg),'_blank');
   }
-  renderSL();
+  if(logId!=='test') renderSL();
 }
 
 // Keep old name for compatibility
@@ -2908,12 +2916,22 @@ async function saveWhatsAppSettings(){
   CFG.sms.waToken   = token   || CFG.sms.waToken;
   CFG.sms.waPhoneId = phoneId || CFG.sms.waPhoneId;
   if(bizName) CFG.sms.senderId = bizName;
+  // Read Twilio fields if visible
+  const twSid   = document.getElementById('tw-sid-inp')?.value?.trim();
+  const twToken = document.getElementById('tw-token-inp')?.value?.trim();
+  const twFrom  = document.getElementById('tw-from-inp')?.value?.trim();
+  if(twSid)   CFG.sms.twilioSid   = twSid;
+  if(twToken) CFG.sms.twilioToken = twToken;
+  if(twFrom)  CFG.sms.twilioFrom  = twFrom;
+
   try {
-    // Save all WhatsApp config to app_config table
     const saves = [
-      sbQ('app_config').upsert({key:'wa_token',   value:CFG.sms.waToken},   {onConflict:'key'}),
-      sbQ('app_config').upsert({key:'wa_phone_id', value:CFG.sms.waPhoneId},{onConflict:'key'}),
-      sbQ('app_config').upsert({key:'wa_biz_name', value:CFG.sms.senderId}, {onConflict:'key'}),
+      sbQ('app_config').upsert({key:'wa_token',    value:CFG.sms.waToken||''},    {onConflict:'key'}),
+      sbQ('app_config').upsert({key:'wa_phone_id', value:CFG.sms.waPhoneId||''},  {onConflict:'key'}),
+      sbQ('app_config').upsert({key:'wa_provider', value:CFG.sms.waProvider||'open'},{onConflict:'key'}),
+      sbQ('app_config').upsert({key:'twilio_sid',  value:CFG.sms.twilioSid||''},  {onConflict:'key'}),
+      sbQ('app_config').upsert({key:'twilio_token',value:CFG.sms.twilioToken||''},{onConflict:'key'}),
+      sbQ('app_config').upsert({key:'twilio_from', value:CFG.sms.twilioFrom||''}, {onConflict:'key'}),
       sbQ('app_config').upsert({key:'wa_enabled',  value:String(CFG.sms.enabled)},{onConflict:'key'}),
     ];
     await Promise.all(saves);
@@ -3873,49 +3891,99 @@ function renderAdm(){
       ${kc('Auto-send',CFG.sms.autoSendOnComplete?'ON':'OFF','On delivery','')}
     </div>
 
+    <!-- Provider selector -->
     <div class="card mb4">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-        <div><div style="font-size:14px;font-weight:800">WhatsApp Business API</div>
-          <div style="font-size:11px;color:var(--ink3)">Meta Cloud API — send receipts automatically via WhatsApp</div>
+      <div class="sec" style="font-size:12px;margin-bottom:12px">WhatsApp Provider</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:4px">
+        <div onclick="CFG.sms.waProvider='twilio';renderAdm()" style="border:2px solid ${(CFG.sms.waProvider||'twilio')==='twilio'?'var(--blue)':'var(--line2)'};border-radius:var(--r2);padding:12px;text-align:center;cursor:pointer;background:${(CFG.sms.waProvider||'twilio')==='twilio'?'var(--blt)':''}">
+          <div style="font-size:18px">📡</div>
+          <div style="font-size:12px;font-weight:800;margin-top:4px">Twilio</div>
+          <div style="font-size:10px;color:var(--ink3)">Recommended</div>
         </div>
-      </div>
-
-      <div style="background:var(--alt);border-radius:var(--r2);padding:10px 14px;margin-bottom:14px;font-size:11px;color:var(--amber);line-height:1.6">
-        📋 <b>Setup steps:</b><br>
-        1. Go to <b>developers.facebook.com</b> → Create App → Business<br>
-        2. Add <b>WhatsApp</b> product → Get Phone Number ID & Token<br>
-        3. Paste below and save. Without API token, app will open WhatsApp manually.
-      </div>
-
-      <div class="g2" style="gap:10px">
-        <div class="fg"><label>WhatsApp Phone Number ID</label>
-          <input type="text" id="wa-phoneid-inp" value="${CFG.sms.waPhoneId||''}" oninput="CFG.sms.waPhoneId=this.value"
-            placeholder="From Meta Developer Console">
-          <div style="font-size:10px;color:var(--ink3);margin-top:3px">Found in WhatsApp → Getting Started in Meta dashboard</div>
+        <div onclick="CFG.sms.waProvider='meta';renderAdm()" style="border:2px solid ${CFG.sms.waProvider==='meta'?'var(--blue)':'var(--line2)'};border-radius:var(--r2);padding:12px;text-align:center;cursor:pointer;background:${CFG.sms.waProvider==='meta'?'var(--blt)':''}">
+          <div style="font-size:18px">📘</div>
+          <div style="font-size:12px;font-weight:800;margin-top:4px">Meta Direct</div>
+          <div style="font-size:10px;color:var(--ink3)">Advanced</div>
         </div>
-        <div class="fg"><label>Permanent Access Token</label>
-          <input type="password" id="wa-token-inp" value="${CFG.sms.waToken||''}" oninput="CFG.sms.waToken=this.value"
-            placeholder="EAA...">
-          <div style="font-size:10px;color:var(--ink3);margin-top:3px">From Meta System User → Generate token (never expires)</div>
-        </div>
-      </div>
-
-      <div class="fg mt3"><label>Business Display Name</label>
-        <input type="text" id="wa-bizname-inp" value="${CFG.sms.senderId||CFG.bizName}" oninput="CFG.sms.senderId=this.value"
-          placeholder="${CFG.bizName}">
-      </div>
-
-      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
-        <button class="btn bp bsm" onclick="saveWhatsAppSettings()">
-          💾 Save Settings
-        </button>
-        <button class="btn bs bsm" onclick="testWhatsApp()">📤 Send Test Message</button>
-        <div style="font-size:11px;color:${CFG.sms.waToken?'var(--green)':'var(--red)'};align-self:center;font-weight:700">
-          ${CFG.sms.waToken?'✅ API Configured':'⚠ Not configured — will open WhatsApp manually'}
+        <div onclick="CFG.sms.waProvider='open';renderAdm()" style="border:2px solid ${CFG.sms.waProvider==='open'?'var(--blue)':'var(--line2)'};border-radius:var(--r2);padding:12px;text-align:center;cursor:pointer;background:${CFG.sms.waProvider==='open'?'var(--blt)':''}">
+          <div style="font-size:18px">📲</div>
+          <div style="font-size:12px;font-weight:800;margin-top:4px">Open App</div>
+          <div style="font-size:10px;color:var(--ink3)">No API needed</div>
         </div>
       </div>
     </div>
+
+    ${(CFG.sms.waProvider||'twilio')==='twilio'?`
+    <!-- Twilio Settings -->
+    <div class="card mb4">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <div style="width:36px;height:36px;background:#F22F46;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:14px">T</div>
+        <div><div style="font-size:14px;font-weight:800">Twilio WhatsApp</div>
+          <div style="font-size:11px;color:var(--ink3)">Easy setup • Free trial $15 credit • twilio.com</div>
+        </div>
+      </div>
+      <div style="background:var(--alt);border-radius:var(--r2);padding:10px 14px;margin-bottom:14px;font-size:11px;color:var(--amber);line-height:1.6">
+        📋 <b>Setup (5 min):</b><br>
+        1. Go to <b>twilio.com</b> → Sign up free<br>
+        2. Go to <b>Messaging → Try it out → Send a WhatsApp message</b><br>
+        3. Copy <b>Account SID</b> and <b>Auth Token</b> from dashboard<br>
+        4. Join sandbox: send <b>"join [word]-[word]"</b> from customer phone to <b>+1 415 523 8886</b>
+      </div>
+      <div class="g2" style="gap:10px">
+        <div class="fg"><label>Account SID</label>
+          <input type="text" id="tw-sid-inp" value="${CFG.sms.twilioSid||''}" oninput="CFG.sms.twilioSid=this.value" placeholder="ACxxxxxxxxxxxxxxxx">
+        </div>
+        <div class="fg"><label>Auth Token</label>
+          <input type="password" id="tw-token-inp" value="${CFG.sms.twilioToken||''}" oninput="CFG.sms.twilioToken=this.value" placeholder="Your auth token">
+        </div>
+      </div>
+      <div class="fg mt2"><label>Twilio WhatsApp From Number</label>
+        <input type="text" id="tw-from-inp" value="${CFG.sms.twilioFrom||'whatsapp:+14155238886'}" oninput="CFG.sms.twilioFrom=this.value" placeholder="whatsapp:+14155238886">
+        <div style="font-size:10px;color:var(--ink3);margin-top:3px">Sandbox: whatsapp:+14155238886 | Production: your approved number</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button class="btn bp bsm" onclick="saveWhatsAppSettings()">💾 Save Settings</button>
+        <button class="btn bs bsm" onclick="testWhatsApp()">📤 Send Test</button>
+        <div style="font-size:11px;color:${CFG.sms.twilioSid?'var(--green)':'var(--red)'};align-self:center;font-weight:700">
+          ${CFG.sms.twilioSid?'✅ Twilio Configured':'⚠ Enter credentials above'}
+        </div>
+      </div>
+    </div>`:''}
+
+    ${CFG.sms.waProvider==='meta'?`
+    <!-- Meta Direct Settings -->
+    <div class="card mb4">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+        <div><div style="font-size:14px;font-weight:800">Meta WhatsApp Cloud API</div>
+          <div style="font-size:11px;color:var(--ink3)">Direct Meta integration</div>
+        </div>
+      </div>
+      <div class="g2" style="gap:10px">
+        <div class="fg"><label>Phone Number ID</label>
+          <input type="text" id="wa-phoneid-inp" value="${CFG.sms.waPhoneId||''}" oninput="CFG.sms.waPhoneId=this.value" placeholder="1326399847219285">
+        </div>
+        <div class="fg"><label>Access Token</label>
+          <input type="password" id="wa-token-inp" value="${CFG.sms.waToken||''}" oninput="CFG.sms.waToken=this.value" placeholder="EAA...">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button class="btn bp bsm" onclick="saveWhatsAppSettings()">💾 Save Settings</button>
+        <button class="btn bs bsm" onclick="testWhatsApp()">📤 Send Test</button>
+        <div style="font-size:11px;color:${CFG.sms.waToken?'var(--green)':'var(--red)'};align-self:center;font-weight:700">
+          ${CFG.sms.waToken?'✅ Meta Configured':'⚠ Enter credentials above'}
+        </div>
+      </div>
+    </div>`:''}
+
+    ${CFG.sms.waProvider==='open'?`
+    <div class="card mb4" style="text-align:center;padding:24px">
+      <div style="font-size:32px;margin-bottom:8px">📲</div>
+      <div style="font-size:14px;font-weight:800;margin-bottom:6px">Open WhatsApp Mode</div>
+      <div style="font-size:12px;color:var(--ink3);line-height:1.6">When sending a receipt, WhatsApp will open on the device with the message pre-filled. Staff tap Send manually.<br><br>No API setup required. Works immediately on any phone.</div>
+      <button class="btn bp bsm mt3" onclick="saveWhatsAppSettings()">💾 Save This Setting</button>
+    </div>`:''}
+
 
     <div class="card mb4">
       <div class="sec" style="font-size:12px;margin-bottom:12px">Auto-send Rules</div>
@@ -5347,9 +5415,13 @@ async function sbBootstrapApp() {
     });
 
     // Load WhatsApp settings from DB
-    if(cfg.wa_token)    CFG.sms.waToken   = cfg.wa_token;
-    if(cfg.wa_phone_id) CFG.sms.waPhoneId = cfg.wa_phone_id;
-    if(cfg.wa_biz_name) CFG.sms.senderId  = cfg.wa_biz_name;
+    if(cfg.wa_token)     CFG.sms.waToken     = cfg.wa_token;
+    if(cfg.wa_phone_id)  CFG.sms.waPhoneId   = cfg.wa_phone_id;
+    if(cfg.wa_provider)  CFG.sms.waProvider  = cfg.wa_provider;
+    if(cfg.twilio_sid)   CFG.sms.twilioSid   = cfg.twilio_sid;
+    if(cfg.twilio_token) CFG.sms.twilioToken = cfg.twilio_token;
+    if(cfg.twilio_from)  CFG.sms.twilioFrom  = cfg.twilio_from;
+    if(cfg.wa_biz_name)  CFG.sms.senderId    = cfg.wa_biz_name;
     if(cfg.wa_enabled !== undefined) CFG.sms.enabled = cfg.wa_enabled !== 'false';
     if(cfg.anpr_provider) CFG.anprProvider = cfg.anpr_provider;
     if(cfg.plate_recognizer_key) CFG.plateRecognizerKey = cfg.plate_recognizer_key;
