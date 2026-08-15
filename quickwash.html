@@ -1044,8 +1044,7 @@ async function sbCreateServiceEntry(payload) {
       // Insert plate, ignore if duplicate
       await sbQ('customer_plates').insert({
         customer_id: payload.customer_id, plate: payload.plate.toUpperCase()
-      }).then(({error})=>{ if(error&&error.code!=='23505') console.warn('[DB] Plate:',error.message); })
-        .catch(()=>{});
+      }).then(({error})=>{ /* ignore 23505 duplicate plate */ }).catch(()=>{});
     }
   }
 
@@ -3108,7 +3107,7 @@ function openCM(id=null){
     <div class="fg"><label>Email</label><input type="email" id="cm-e" value="${c?.email||''}"></div>
     <div class="fg"><label>Plates (comma separated)</label><input type="text" id="cm-pl" value="${c?c.plates.join(', '):''}"></div>
     <div class="fg"><label>Notes</label><textarea id="cm-nt" rows="2" style="resize:none">${c?.notes||''}</textarea></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveCM(${id||'null'})">${c?'Update':'Add'}</button></div>`);
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveCM('${id||'null'}')">${c?'Update':'Add'}</button></div>`);
 }
 async function saveCM(id){
   const n=el('cm-n')?.value.trim(), p=el('cm-p')?.value.trim();
@@ -3166,7 +3165,7 @@ function openCustDetail(id){
     ${visitProg?`<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;margin-bottom:8px;color:var(--purple)">💜 Loyalty Progress</div>${visitProg}</div>`:''}
     <div class="fg" style="margin-bottom:8px"><label>Plates</label><div style="display:flex;gap:5px;flex-wrap:wrap">${c.plates.map(p=>`<span class="bx bi">${p}</span>`).join('')||'None'}</div></div>
     <div style="display:flex;gap:8px;margin-top:14px">
-      <button class="btn bp bsm" onclick="closeModal();openCM(${id})">✏ Edit</button>
+      <button class="btn bp bsm" onclick="closeModal();openCM('${id}')">✏ Edit</button>
       <button class="btn bg2 bsm" onclick="closeModal();custNewWash(${id})">🚗 New Wash</button>
       <button class="btn br2 bsm" onclick="delCust(${id})">Delete</button>
     </div>`,560);
@@ -3510,15 +3509,16 @@ function rexp(){
   if(typeof sbQ==='function'){
     sbQ('expenses').select('*').order('date',{ascending:false})
       .then(({data,error})=>{
-        if(!error&&data){
+        if(error) console.warn('[DB] rexp:',error.message);
+        if(data){
           S.exps=data.map(e=>({
-            id:e.id, cat:e.category, category:e.category,
+            id:e.id, cat:e.category||'', category:e.category||'',
             amt:parseFloat(e.amount||0), amount:parseFloat(e.amount||0),
-            date:e.date, notes:e.notes||''
+            date:e.date||'', notes:e.notes||''
           }));
         }
         _rexpInner();
-      }).catch(()=>_rexpInner());
+      }).catch(e=>{console.warn('[rexp]',e);_rexpInner();});
     return;
   }
   _rexpInner();
@@ -3587,7 +3587,9 @@ async function sexp(id){
       toast('Expense added ✓','ok');
       console.log('[QuickWash] ✅ Expense saved to DB:',saved.id);
     }
-    closeModal();rexp();
+    closeModal();
+    // Force reload from DB so UI updates
+    setTimeout(()=>rexp(),300);
   } catch(e) {
     toast('Failed to save expense: '+(e.message||'DB error'),'e');
     console.error('[DB] Expense save failed:',e);
@@ -3606,18 +3608,45 @@ async function dexp(id){
 }
 
 function renderRpt(){
+  // Reload expenses fresh from DB before rendering
+  if(typeof sbQ==='function'){
+    sbQ('expenses').select('*').order('date',{ascending:false})
+      .then(({data})=>{
+        if(data) S.exps=data.map(e=>({id:e.id,cat:e.category,category:e.category,amt:parseFloat(e.amount||0),amount:parseFloat(e.amount||0),date:e.date,notes:e.notes||''}));
+        _renderRptInner();
+      }).catch(()=>_renderRptInner());
+    return;
+  }
+  _renderRptInner();
+}
+function _renderRptInner(){
+  // Load fresh service logs if S.sl is populated but S.txns is stale
+  if(S.sl && S.sl.length && (!S.txns || !S.txns.length)){
+    S.txns = S.sl.filter(l=>l.paid).map(l=>({
+      id:l.id, rcpt:l.invoiceNo, type:'wash', plate:l.plate,
+      svcs:l.svcs||[], tot:parseFloat(l.amount||l.total||0),
+      pay:l.pay, status:'completed',
+      date:l.deliveredAt||l.enteredAt, custId:l.custId
+    }));
+  }
   el('rpt-tabs').innerHTML=tabs(['revenue','inventory','profit','staff'],(S.rptTab||'revenue'),"setRptTab");
   const c=el('rpt-content');
-  const ms=['Jan','Feb','Mar','Apr','May','Jun','Jul'];
+  const ms=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const curYear=new Date().getFullYear();
   if(S.rptTab==='revenue'){
-    const md=ms.map((m,i)=>{const txns=S.txns.filter(t=>new Date(t.date).getMonth()===i);const rev=txns.reduce((a,t)=>a+t.tot,0);const exp=S.exps.filter(e=>new Date(e.date).getMonth()===i).reduce((a,e)=>a+(e.amt||e.amount||0),0);return{m,rev,exp,profit:rev-exp,cnt:txns.length};});
+    const md=ms.map((m,i)=>{
+      const txns=(S.txns||[]).filter(t=>{const d=new Date(t.date);return d.getMonth()===i&&d.getFullYear()===curYear;});
+      const rev=txns.reduce((a,t)=>a+(t.tot||0),0);
+      const exp=(S.exps||[]).filter(e=>{const d=new Date(e.date);return d.getMonth()===i&&d.getFullYear()===curYear;}).reduce((a,e)=>a+(e.amt||e.amount||0),0);
+      return{m,rev,exp,profit:rev-exp,cnt:txns.length};
+    });
     const tR=md.reduce((a,x)=>a+x.rev,0),tE=md.reduce((a,x)=>a+x.exp,0),tP=tR-tE;
     c.innerHTML=`<div class="g4 mb4">${kc('Total Revenue',frs(tR),'YTD','up')}${kc('Total Expenses',frs(tE),'YTD','dn')}${kc('Net Profit',frs(tP),'YTD',tP>=0?'up':'dn')}${kc('Margin',(tR>0?Math.round(tP/tR*100):0)+'%','','')}</div>
     <div class="g2 mb4"><div class="card"><div class="sec">Monthly P&L</div><div class="cw"><canvas id="c-pl"></canvas></div></div><div class="card"><div class="sec">Daily (7 Days)</div><div class="cw"><canvas id="c-day"></canvas></div></div></div>
     <div class="tw"><table><thead><tr><th>Month</th><th>Revenue</th><th>Expenses</th><th>Profit</th><th>Margin</th><th>Txns</th></tr></thead><tbody>${md.map(x=>`<tr><td style="font-weight:700">${x.m}</td><td style="color:var(--blue);font-weight:700">${frs(x.rev)}</td><td style="color:var(--red)">${frs(x.exp)}</td><td style="color:${x.profit>=0?'var(--green)':'var(--red)'};font-weight:700">${frs(x.profit)}</td><td><span class="bx ${x.rev>0&&(x.profit/x.rev*100)>=20?'bok':'bw'}">${x.rev>0?Math.round(x.profit/x.rev*100):0}%</span></td><td>${x.cnt}</td></tr>`).join('')}</tbody></table></div>`;
     setTimeout(()=>{
       mkch('c-pl',{type:'bar',data:{labels:ms,datasets:[{label:'Revenue',data:md.map(x=>x.rev),backgroundColor:'#BFDBFE',borderColor:'#2563EB',borderWidth:2,borderRadius:4},{label:'Expenses',data:md.map(x=>x.exp),backgroundColor:'#FECACA',borderColor:'#DC2626',borderWidth:2,borderRadius:4},{label:'Profit',data:md.map(x=>x.profit),type:'line',borderColor:'#059669',borderWidth:2,pointRadius:4,fill:false,tension:.4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{boxWidth:9,padding:8}}},scales:{y:{grid:{color:'#F1F5F9'},ticks:{callback:v=>'₹'+v.toLocaleString('en-IN')}}}}});
-      const dl=[],dr=[];for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);dl.push(d.toLocaleDateString('en',{day:'numeric',month:'short'}));dr.push(S.txns.filter(t=>new Date(t.date).toDateString()===d.toDateString()).reduce((a,t)=>a+t.tot,0));}
+      const dl=[],dr=[];for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);dl.push(d.toLocaleDateString('en',{day:'numeric',month:'short'}));dr.push((S.txns||[]).filter(t=>new Date(t.date).toDateString()===d.toDateString()).reduce((a,t)=>a+(t.tot||0),0));}
       mkch('c-day',{type:'line',data:{labels:dl,datasets:[{data:dr,borderColor:'#2563EB',borderWidth:2,pointRadius:3,fill:true,backgroundColor:'rgba(37,99,235,.06)',tension:.4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{grid:{color:'#F1F5F9'},ticks:{callback:v=>'₹'+v}}}}});
     },100);
   } else if(S.rptTab==='inventory'){
@@ -3625,13 +3654,17 @@ function renderRpt(){
     c.innerHTML=`<div class="g4 mb4">${kc('Stock Value (Cost)',frs(totalVal),'','up')}${kc('Stock Value (Sell)',frs(sellVal),'','up')}${kc('Potential Profit',frs(sellVal-totalVal),'If all sold','up')}${kc('Items',S.products.length,'Products','')}</div>
     <div class="tw"><table><thead><tr><th>Product</th><th>Stock</th><th>Cost</th><th>Selling</th><th>Profit/Unit</th><th>Stock Value</th><th>Potential</th></tr></thead><tbody>${S.products.map(p=>`<tr><td style="font-weight:700">${p.name}</td><td>${p.stock}</td><td>${frs(p.costPrice)}</td><td>${frs(p.sellingPrice)}</td><td style="color:var(--green);font-weight:700">${frs(p.sellingPrice-p.costPrice)}</td><td>${frs(p.costPrice*p.stock)}</td><td>${frs(p.sellingPrice*p.stock)}</td></tr>`).join('')}</tbody></table></div>`;
   } else if(S.rptTab==='profit'){
-    const sc={};S.txns.forEach(t=>(t.svcs||[]).forEach(s=>sc[s]=(sc[s]||0)+1));
-    c.innerHTML=`<div class="g4 mb4">${kc('Wash Revenue',frs(S.txns.filter(t=>t.type==='wash').reduce((a,t)=>a+t.tot,0)),'From services','up')}${kc('Product Revenue',frs(S.txns.filter(t=>t.type==='product').reduce((a,t)=>a+t.tot,0)),'From POS','up')}${kc('Total Txns',S.txns.length,'All time','')}${kc('Avg Sale',frs(S.txns.length?S.txns.reduce((a,t)=>a+t.tot,0)/S.txns.length:0),'Per transaction','')}</div>
+    const sc={};(S.txns||[]).forEach(t=>(t.svcs||[]).forEach(s=>sc[s]=(sc[s]||0)+1));
+    const washRev=(S.txns||[]).filter(t=>t.type==='wash').reduce((a,t)=>a+(t.tot||0),0);
+    const prodRev=(S.txns||[]).filter(t=>t.type==='product').reduce((a,t)=>a+(t.tot||0),0);
+    const avgSale=(S.txns||[]).length?(S.txns||[]).reduce((a,t)=>a+(t.tot||0),0)/(S.txns||[]).length:0;
+    c.innerHTML=`<div class="g4 mb4">${kc('Wash Revenue',frs(washRev),'From services','up')}${kc('Product Revenue',frs(prodRev),'From POS','up')}${kc('Total Txns',(S.txns||[]).length,'All time','')}${kc('Avg Sale',frs(avgSale),'Per transaction','')}</div>
     <div class="tw"><table><thead><tr><th>Service</th><th>Times Sold</th><th>Avg Price</th><th>Total Revenue</th></tr></thead><tbody>${Object.entries(sc).sort((a,b)=>b[1]-a[1]).map(([name,cnt])=>{const svc=S.washSvcs.find(s=>s.name===name);return`<tr><td style="font-weight:700">${name}</td><td>${cnt}</td><td>${svc?frs(svc.basePrice):'—'}</td><td style="font-weight:700;color:var(--blue)">${frs(cnt*(svc?.basePrice||0))}</td></tr>`;}).join('')}</tbody></table></div>`;
   } else {
     c.innerHTML=`<div class="g4 mb4">${kc('Total Staff',S.staff.length,'Active','')}${kc('Monthly Payroll',frs(S.staff.reduce((a,s)=>a+s.basic+s.hra+s.allowances,0)),'','dn')}${kc('Avg Attendance',Math.round(S.staff.reduce((a,s)=>{const pres=S.attendance.filter(x=>x.staffId===s.id&&x.status==='present').length;return a+pres;},0)/Math.max(1,S.staff.length))+'days','Monthly avg','')}${kc('Roles',new Set(S.staff.map(s=>s.role)).size,'Unique','')}</div>
     <div class="tw"><table><thead><tr><th>Staff</th><th>Role</th><th>Salary</th><th>Attendance</th><th>Status</th></tr></thead><tbody>${S.staff.map(s=>{const pres=S.attendance.filter(x=>x.staffId===s.id&&x.status==='present').length;return`<tr><td style="font-weight:700">${s.name}</td><td>${s.role}</td><td>${frs(s.basic+s.hra+s.allowances)}/mo</td><td>${pres} days present</td><td><span class="bx ${s.active?'bok':'be'}">${s.active?'Active':'Inactive'}</span></td></tr>`;}).join('')}</tbody></table></div>`;
   }
+}
 }
 function setRptTab(t){S.rptTab=t;renderRpt();}
 // ══════════════════════════════════════════════════════════
@@ -6638,9 +6671,12 @@ const _origSaveInv2 = window.saveInv;
 window.saveInv = async function(id) {
   const name = el('ip-n')?.value?.trim();
   if (!name) { toast('Product name required', 'e'); return; }
+  // Generate unique SKU if empty to avoid duplicate constraint
+  let skuVal = el('ip-sku')?.value?.trim() || '';
+  if(!skuVal) skuVal = null; // null avoids unique constraint on empty strings
   const payload = {
     name,
-    sku:           el('ip-sku')?.value   || null,
+    sku:           skuVal,
     category:      el('ip-cat')?.value   || 'accessories',
     brand:         el('ip-brand')?.value || '',
     selling_price: parseFloat(el('ip-sell')?.value)  || 0,
