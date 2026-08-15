@@ -3665,7 +3665,6 @@ function _renderRptInner(){
     <div class="tw"><table><thead><tr><th>Staff</th><th>Role</th><th>Salary</th><th>Attendance</th><th>Status</th></tr></thead><tbody>${S.staff.map(s=>{const pres=S.attendance.filter(x=>x.staffId===s.id&&x.status==='present').length;return`<tr><td style="font-weight:700">${s.name}</td><td>${s.role}</td><td>${frs(s.basic+s.hra+s.allowances)}/mo</td><td>${pres} days present</td><td><span class="bx ${s.active?'bok':'be'}">${s.active?'Active':'Inactive'}</span></td></tr>`;}).join('')}</tbody></table></div>`;
   }
 }
-}
 function setRptTab(t){S.rptTab=t;renderRpt();}
 // ══════════════════════════════════════════════════════════
 // LOYALTY PROGRAM
