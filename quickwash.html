@@ -5719,6 +5719,13 @@ async function sbBootstrapApp() {
     if(cfg.anpr_provider) CFG.anprProvider = cfg.anpr_provider;
     if(cfg.plate_recognizer_key) CFG.plateRecognizerKey = cfg.plate_recognizer_key;
 
+    // Apply biz name to visible UI elements
+    if(CFG.bizName){
+      document.title = 'QuickWash — '+CFG.bizName;
+      const sbName = document.querySelector('.sb-biz-name,.lw-sub,#sb-sub');
+      if(sbName) sbName.textContent = CFG.bizName;
+    }
+
     // Map vehicle types into existing format
     S._vtypes = vtypes;
     VEHICLE_TYPES.length = 0;
@@ -7339,21 +7346,53 @@ window.savePricingMatrix = async function() {
 // ── App Config save ───────────────────────────────────────────
 const _origSaveAdmCfg2 = window.saveAdmCfg;
 window.saveAdmCfg = async function() {
-  // Call original local update
-  if (_origSaveAdmCfg2) _origSaveAdmCfg2();
-  // Sync key configs
+  // Call original to update CFG from form fields
+  if(_origSaveAdmCfg2) _origSaveAdmCfg2();
+
   const entries = {
-    biz_name: CFG.bizName, biz_phone: CFG.bizPhone, biz_addr: CFG.bizAddr,
-    gst_rate: CFG.gstRate, currency: CFG.currency,
-    points_per_rupee: CFG.pointsPerRupee, point_value: CFG.pointValue,
-    loyalty_enabled: CFG.loyaltyEnabled,
-    cctv_dedup_mins: CFG.cctvDedupMins, cctv_min_conf: CFG.cctvMinConf,
-    cctv_scan_interval: CFG.cctvScanInterval
+    biz_name:          CFG.bizName         || '',
+    biz_phone:         CFG.bizPhone        || '',
+    biz_addr:          CFG.bizAddr         || '',
+    gst_rate:          String(CFG.gstRate  || 18),
+    currency:          CFG.currency        || 'INR',
+    points_per_rupee:  String(CFG.pointsPerRupee || 0.1),
+    point_value:       String(CFG.pointValue     || 0.1),
+    loyalty_enabled:   String(CFG.loyaltyEnabled !== false),
+    cctv_dedup_mins:   String(CFG.cctvDedupMins  || 5),
+    cctv_min_conf:     String(CFG.cctvMinConf    || 80),
+    cctv_scan_interval:String(CFG.cctvScanInterval||30),
   };
-  for (const [k, v] of Object.entries(entries)) {
-    await dbSave('saveConfig', [k, v], 'Config: '+k);
+
+  const btn=document.querySelector('[onclick*="saveAdmCfg"]');
+  if(btn) btn.disabled=true;
+
+  try {
+    // Upsert all config keys at once
+    const rows = Object.entries(entries).map(([key,value])=>({key,value}));
+    const {error} = await sbQ('app_config').upsert(rows, {onConflict:'key'});
+    if(error) throw error;
+    toast('Settings saved ✓','ok');
+    // Update page title with new biz name
+    document.title='QuickWash — '+CFG.bizName;
+    if(el('lw-logo-txt')) el('lw-logo-txt').textContent=CFG.bizName;
+    if(el('sb-biz-name')) el('sb-biz-name').textContent=CFG.bizName;
+  } catch(e) {
+    console.error('[Config] Save failed:',e.message);
+    // Fallback: save one by one
+    let saved=0;
+    for(const [key,value] of Object.entries(entries)){
+      try {
+        const {data} = await sbQ('app_config').select('key').eq('key',key);
+        if(data&&data.length) await sbQ('app_config').update({value}).eq('key',key);
+        else await sbQ('app_config').insert({key,value});
+        saved++;
+      } catch(e2){}
+    }
+    if(saved>0) toast('Settings saved ('+saved+'/'+Object.keys(entries).length+') ✓','ok');
+    else toast('Save failed — check DB connection','e');
+  } finally {
+    if(btn) btn.disabled=false;
   }
-  toast('Settings saved to database ✓', 'ok');
 };
 
 // ── Receive PO ────────────────────────────────────────────────
