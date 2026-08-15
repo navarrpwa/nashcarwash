@@ -2707,7 +2707,7 @@ function openSlReceipt(id){
   const cat=l.vcat||'Sedan';
   const sub=calcLogSub(l);const disc=l.disc||0;const tax=l.tax||0;
   const total=Math.max(0,sub-disc+tax);
-  const rcptNum='INV-'+String(l.id).padStart(6,'0');
+  const rcptNum=l.invoiceNo||l.jobNumber||('INV-'+String(l.id).slice(-6).toUpperCase());
   const payLine=l.payDetail&&l.payDetail.length
     ? l.payDetail.map(p=>{const m=CFG.payMethods.find(x=>x.id===p.method);return`${m?.label||p.method}: ${frs(p.amount)}`;}).join(' + ')
     : (l.pay||'').toUpperCase();
@@ -2725,7 +2725,7 @@ function openSlReceipt(id){
       <div class="rrow"><span>Category:</span><span>${cat}</span></div>
       ${cust?`<div class="rrow"><span>Customer:</span><span>${cust.name}</span></div>`:''}
       <div class="rdv"></div>
-      ${l.svcs.map(name=>{const s=S.washSvcs.find(x=>x.name===name);return`<div class="rrow"><span>${name}</span><span>${frs(s?gPrice(s,cat):0)}</span></div>`;}).join('')}
+      ${(l.svcs&&l.svcs.length?l.svcs:(l.svcDetails||[]).map(s=>s.service_name||s.name||'')).filter(Boolean).map(name=>{const s=S.washSvcs.find(x=>x.name===name||x.service_name===name);const price=s?gPrice(s,cat):0;return`<div class="rrow"><span>${name}</span><span>${price>0?frs(price):''}</span></div>`;}).join('')||`<div class="rrow"><span style="color:var(--ink3)">Services</span><span>${frs(total)}</span></div>`}
       <div class="rdv"></div>
       <div class="rrow"><span>Subtotal:</span><span>${frs(sub)}</span></div>
       ${disc>0?`<div class="rrow"><span>Discount:</span><span>-${frs(disc)}</span></div>`:''}
@@ -2766,12 +2766,29 @@ function sendWhatsApp(logId,auto=false){
   const cat=l.vcat||'Sedan';
   const sub=calcLogSub(l);const disc=l.disc||0;const tax=l.tax||0;
   const total=Math.max(0,sub-disc+tax);
-  const rcptNum='INV-'+String(l.id).padStart(6,'0');
+  const rcptNum=l.invoiceNo||l.jobNumber||('INV-'+String(l.id).slice(-6).toUpperCase());
   const payLine=l.payDetail&&l.payDetail.length
     ? l.payDetail.map(p=>{const m=CFG.payMethods.find(x=>x.id===p.method);return m?.label||p.method;}).join('+')
     : (l.pay||'').toUpperCase();
   const loyMsg=l.ptsEarned>0?`Loyalty Points Earned: ${l.ptsEarned}. `:'';
-  // Build SMS from template
+  // Get services — load from svcDetails if svcs is empty (DB loaded logs)
+  const svcNames=(l.svcs&&l.svcs.length?l.svcs:(l.svcDetails||[]).map(s=>s.service_name||s.name||'')).filter(Boolean);
+
+  // If still empty, try loading from DB
+  if(!svcNames.length && isUUID(l.id)){
+    sbQ('service_log_services').select('service_name').eq('log_id',l.id)
+      .then(({data})=>{
+        if(data&&data.length){
+          l.svcDetails=data;
+          l.svcs=data.map(s=>s.service_name||'').filter(Boolean);
+          // Retry after loading
+          setTimeout(()=>sendWhatsApp(logId,auto),300);
+        }
+      }).catch(()=>{});
+    toast('Loading services…','i');
+    return;
+  }
+
   const smsText=CFG.sms.template
     .replace('{custName}',cust.name)
     .replace('{bizName}',CFG.bizName)
@@ -2779,7 +2796,7 @@ function sendWhatsApp(logId,auto=false){
     .replace('{invoice}',rcptNum)
     .replace('{date}',fdt(l.enteredAt))
     .replace('{time}',ftm(l.enteredAt))
-    .replace('{services}',l.svcs.join(', '))
+    .replace('{services}',svcNames.join(', ')||'—')
     .replace('{total}',frs(total))
     .replace('{paid}',l.paid?frs(total):'Pending')
     .replace('{payMethod}',payLine||'—')
@@ -2798,7 +2815,7 @@ function sendWhatsApp(logId,auto=false){
 ` +
     `📅 Date: ${fdt(l.enteredAt)}
 ` +
-    `🔧 Services: ${l.svcs.join(', ')}
+    `🔧 Services: ${svcNames.join(', ')||'—'}
 ` +
     `💰 Total: *${frs(total)}*
 ` +
@@ -6065,8 +6082,9 @@ window.completeEntry = async function() {
     };
 
     // Insert into Supabase directly
-    const jobNum = 'JOB-' + String(Date.now()).slice(-6);
-    const invNum = 'INV-' + String(Date.now()).slice(-6);
+    const ts=String(Date.now()).slice(-6);
+    const jobNum = 'JOB-' + ts;
+    const invNum = 'INV-' + ts;
     const {data:logRow, error:logErr} = await sbQ('service_logs').insert({
       job_number: jobNum,
       invoice_no: invNum,
