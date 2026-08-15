@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -97,6 +98,8 @@ body{background:var(--bg);color:var(--ink);font-size:14px;display:flex;height:10
 /* TOPBAR */
 .tb{height:50px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 20px;flex-shrink:0}
 .tb-l{display:flex;align-items:center;gap:10px}
+/* Safe area for notch/home bar on iOS/Android */
+.ct{flex:1;overflow-y:auto;overflow-x:hidden;padding:18px;background:var(--bg);-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding-bottom:calc(18px + env(safe-area-inset-bottom,0px))}
 #mb{display:none;width:32px;height:32px;border:1.5px solid var(--line2);border-radius:var(--r);background:#fff;cursor:pointer;align-items:center;justify-content:center;flex-shrink:0}
 #mb svg{width:15px;height:15px;stroke:var(--ink2);stroke-width:2;fill:none}
 .tb h1{font-size:15px;font-weight:800;letter-spacing:-.3px}
@@ -477,6 +480,7 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
     <div class="sb-foot">
       <div class="sb-ur"><div class="sb-av" id="av"></div><div><div class="sb-un" id="un"></div><div class="sb-rl" id="ur"></div></div></div>
       <button class="sb-out" onclick="doLogout()">Sign Out</button>
+      <button id="pwa-install-btn" onclick="installPWA()" style="display:none;margin-top:6px;width:100%;padding:8px;background:var(--blue);color:#fff;border:none;border-radius:var(--r);font-size:11px;font-weight:700;cursor:pointer">📲 Add to Home Screen</button>
     </div>
   </div>
 
@@ -2949,6 +2953,49 @@ async function saveWhatsAppSettings(){
     } catch(e2){
       toast('Saved locally — DB error: '+e2.message,'w');
     }
+  }
+}
+
+// ── PWA Install Prompt ────────────────────────────────────────
+let _pwaPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  _pwaPrompt = e;
+  const btn = document.getElementById('pwa-install-btn');
+  if(btn) btn.style.display='block';
+});
+window.addEventListener('appinstalled', () => {
+  const btn = document.getElementById('pwa-install-btn');
+  if(btn) btn.style.display='none';
+  _pwaPrompt = null;
+  toast('✅ QuickWash installed on home screen!','ok');
+});
+async function installPWA(){
+  if(_pwaPrompt){
+    _pwaPrompt.prompt();
+    const {outcome} = await _pwaPrompt.userChoice;
+    if(outcome==='accepted') toast('Installing QuickWash…','ok');
+    _pwaPrompt=null;
+  } else {
+    // iOS/Safari fallback
+    openModal(`${mhd('📲 Add to Home Screen')}
+      <div style="text-align:center;padding:10px 0">
+        <div style="font-size:40px;margin-bottom:12px">📱</div>
+        <div style="font-size:14px;font-weight:800;margin-bottom:8px">Install QuickWash</div>
+      </div>
+      <div style="background:var(--bg);border-radius:var(--r2);padding:14px;font-size:13px;line-height:1.8">
+        <b>On iPhone/iPad (Safari):</b><br>
+        1. Tap the <b>Share button</b> (□↑) at the bottom<br>
+        2. Scroll down and tap <b>"Add to Home Screen"</b><br>
+        3. Tap <b>Add</b> — QuickWash appears like an app!<br><br>
+        <b>On Android (Chrome):</b><br>
+        1. Tap the <b>⋮ menu</b> (top right)<br>
+        2. Tap <b>"Add to Home Screen"</b> or <b>"Install App"</b><br>
+        3. Tap <b>Add</b>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:12px">
+        <button class="btn bp bsm" onclick="closeModal()">Got it</button>
+      </div>`);
   }
 }
 
@@ -5962,9 +6009,8 @@ const _origCompleteEntry = window.completeEntry;
 window.completeEntry = async function() {
   if(window._submitting){toast('Please wait…','w');return;}
   window._submitting=true;
-  const btn = document.querySelector('#step-4-confirm') ||
-              document.querySelector('button[onclick*="completeEntry"]');
-  if(btn) btn.disabled=true;
+  // Disable ALL confirm buttons immediately to prevent double-tap
+  document.querySelectorAll('[onclick*="completeEntry"]').forEach(b=>b.disabled=true);
 
   try {
     const vtRow = S._vtypes?.find(vt=>vt.code===S.W.vtype);
@@ -6088,7 +6134,7 @@ window.completeEntry = async function() {
     if(btn) btn.disabled=false;
   } finally {
     window._submitting=false;
-    if(btn) btn.disabled=false;
+    document.querySelectorAll('[onclick*="completeEntry"]').forEach(b=>b.disabled=false);
   }
 };
 
@@ -6168,41 +6214,74 @@ window.saveSlEdit = async function(id) {
 // ── OVERRIDE: Record payment ──────────────────────────────────
 const _origSaveSlPayment = window.saveSlPayment;
 window.saveSlPayment = async function(id, total) {
-  const log = S.sl.find(l => l.id === id);
-  if (!log) return;
+  const log = S.sl.find(l => l.id === id || String(l.id)===String(id));
+  if (!log) { toast('Log not found','e'); return; }
 
-  QB.loading('Recording payment…');
+  // Get selected payment methods
+  const methods = [];
+  document.querySelectorAll('.pm-check:checked').forEach(cb => {
+    const amt = parseFloat(el('pm-amt-' + cb.value)?.value) || 0;
+    if(amt > 0) methods.push({ method: cb.value, amount: amt });
+  });
+
+  // If no split amounts, use full total with first selected method
+  if(methods.length === 0){
+    const checked = document.querySelector('.pm-check:checked');
+    if(checked) methods.push({ method: checked.value, amount: total });
+    else { toast('Select a payment method','e'); return; }
+  }
+
+  const totalPaid = methods.reduce((a,m) => a+m.amount, 0);
+  if(Math.abs(totalPaid - total) > 1){
+    toast('Payment total must equal '+frs(total),'e'); return;
+  }
+
+  const pts = CFG.loyaltyEnabled ? Math.floor(total*(CFG.pointsPerRupee||0.1)) : 0;
+  const dbId = isUUID(log.id) ? log.id : (isUUID(log._dbId) ? log._dbId : null);
+
+  const btn = document.querySelector('.modal .btn.bp'); if(btn) btn.disabled=true;
   try {
-    const methods = [];
-    document.querySelectorAll('.pm-check:checked').forEach(cb => {
-      const amt = parseFloat(el('pm-amt-' + cb.value)?.value) || 0;
-      if (amt > 0) methods.push({ method: cb.value, amount: amt });
-    });
-    const totalPaid = methods.reduce((a, m) => a + m.amount, 0);
-    if (Math.abs(totalPaid - total) > 0.01) {
-      toast('Payment total must equal ₹' + total, 'e'); QB.doneLoading(); return;
+    if(dbId){
+      // Save payment records
+      const pmtRows = methods.map(m=>({ log_id:dbId, method:m.method, amount:m.amount }));
+      await sbQ('service_log_payments').insert(pmtRows);
+
+      // Mark log as paid
+      await sbQ('service_logs').update({
+        paid: true,
+        pay_method: methods.map(m=>m.method).join('+'),
+        pts_earned: (log.ptsEarned||0)+pts,
+        updated_at: new Date().toISOString()
+      }).eq('id', dbId);
+
+      // Update customer loyalty
+      if(isUUID(log.custId)){
+        const cust = S.customers.find(c=>c.id===log.custId);
+        if(cust){
+          cust.points = Math.max(0,(cust.points||0)+pts);
+          sbQ('customers').update({
+            points: cust.points,
+            total_spent: (cust.totalSpent||0)+total,
+            last_visit: new Date().toISOString()
+          }).eq('id',log.custId).then(()=>{}).catch(()=>{});
+        }
+      }
     }
-    const pts = CFG.loyaltyEnabled ? Math.floor(total * (CFG.pointsPerRupee || 0.1)) : 0;
-    await QB.recordPayment({
-      log_id: id,
-      pay_method: methods.map(m => m.method).join('+'),
-      payment_details: methods,
-      pts_earned: pts
-    });
-    // Optimistic update
+
+    // Update local state
     log.paid = true;
     log.payDetail = methods;
-    log.ptsEarned = pts;
+    log.pay = methods.map(m=>m.method).join('+');
+    log.ptsEarned = (log.ptsEarned||0)+pts;
 
-    QB.doneLoading();
-    closeModal();
-    renderSL();
-    toast('Payment recorded ✓', 'ok');
+    closeModal(); renderSL();
+    toast('✅ Payment recorded'+( pts>0?' | +'+pts+' pts':''),'ok');
+    if(CFG.sms?.autoSendOnPayment) setTimeout(()=>sendSMS(id,true),1000);
 
-    if (CFG.sms?.autoSendOnPayment) setTimeout(() => sendSMS(id, true), 1000);
-  } catch(err) {
-    QB.doneLoading();
-    QB.error(err, 'Payment recording failed');
+  } catch(e) {
+    toast('Payment save failed: '+(e.message||'DB error'),'e');
+    console.error('[Payment]',e);
+    if(btn) btn.disabled=false;
   }
 };
 
