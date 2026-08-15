@@ -2310,22 +2310,34 @@ function checkVisitRewards(cust){
 }
 function showEntryReceipt(entry){
   const cust=S.customers.find(c=>c.id===entry.custId);
+  // Build service rows — handle both name strings and svcDetail objects
+  const svcRows=(entry.svcDetails&&entry.svcDetails.length>0?entry.svcDetails:
+    (entry.svcs||[]).map(name=>({service_name:name,name,price:0,qty:1}))
+  ).filter(s=>(s.service_name||s.name||'').trim());
+
+  const svcHtml=svcRows.map(s=>{
+    const name=s.service_name||s.name||'';
+    const price=parseFloat(s.price||0)*(s.qty||1);
+    return`<div class="rrow"><span>${name}${(s.qty||1)>1?' ×'+s.qty:''}</span><span>${price>0?frs(price):''}</span></div>`;
+  }).join('');
+
   openModal(`${mhd('✅ Entry Confirmed')}
     <div class="rct" id="rcpt-body">
-      <div class="rlogo">${CFG.bizName.toUpperCase()}</div><div class="rsub">${CFG.bizAddr} | ${CFG.bizPhone}</div>
+      <div class="rlogo">${CFG.bizName.toUpperCase()}</div>
+      <div class="rsub">${CFG.bizAddr||''} | ${CFG.bizPhone||''}</div>
       <div class="rdv"></div>
       <div class="rrow"><span>Plate:</span><span>${entry.plate}</span></div>
-      <div class="rrow"><span>Category:</span><span>${entry.vcat}</span></div>
+      <div class="rrow"><span>Category:</span><span>${entry.vcatName||entry.vcat||''}</span></div>
       ${cust?`<div class="rrow"><span>Customer:</span><span>${cust.name}</span></div>`:''}
       <div class="rdv"></div>
-      ${entry.svcs.map(s=>`<div class="rrow"><span>${s}</span><span></span></div>`).join('')}
+      ${svcHtml||'<div class="rrow" style="color:var(--ink3)"><span>Services</span><span>—</span></div>'}
       <div class="rdv"></div>
-      <div class="rrow"><span>Subtotal:</span><span>${frs(entry.amount+entry.disc)}</span></div>
-      ${entry.disc>0?`<div class="rrow"><span>Discount:</span><span>-${frs(entry.disc)}</span></div>`:''}
-      <div class="rrow" style="font-weight:900;font-size:14px"><span>TOTAL:</span><span>${frs(entry.amount)}</span></div>
+      ${entry.disc>0?`<div class="rrow"><span>Subtotal:</span><span>${frs((entry.amount||0)+(entry.disc||0))}</span></div>
+      <div class="rrow" style="color:var(--red)"><span>Discount:</span><span>-${frs(entry.disc)}</span></div>`:''}
+      <div class="rrow" style="font-weight:900;font-size:14px"><span>TOTAL:</span><span>${frs(entry.amount||0)}</span></div>
       <div class="rdv"></div>
-      <div style="text-align:center;font-size:10px">Payment: ${entry.pay.toUpperCase()}</div>
-      ${entry.ptsEarned>0?`<div style="text-align:center;font-size:10px;margin-top:4px;color:var(--purple)">+${entry.ptsEarned} loyalty points earned</div>`:''}
+      <div style="text-align:center;font-size:10px">Payment: ${(entry.pay||'cash').toUpperCase()}</div>
+      ${(entry.ptsEarned||0)>0?`<div style="text-align:center;font-size:10px;margin-top:4px;color:purple">+${entry.ptsEarned} loyalty points earned</div>`:''}
       <div style="text-align:center;margin-top:8px;font-size:11px">Thank you! 🚗✨</div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-top:14px">
@@ -6019,8 +6031,11 @@ window.completeEntry = async function() {
     const svcDetails=(S.W.svcs||[]).map(x=>{
       const svc=S.washSvcs.find(s=>String(s.id)===String(x.id));
       const price=svc?gPrice(svc,S.W.vcat||'Sedan'):0;
-      return{service_id:isUUID(svc?.id)?svc.id:null,service_name:svc?.name||'',price,qty:1};
-    });
+      return{service_id:isUUID(svc?.id)?svc.id:null,
+        service_name:svc?.name||svc?.service_name||'',
+        name:svc?.name||svc?.service_name||'',
+        price,qty:x.qty||1};
+    }).filter(s=>s.service_name);
 
     const sub   = svcDetails.reduce((a,s)=>a+s.price,0);
     const disc  = parseFloat(S.W.disc)||0;
@@ -6039,7 +6054,8 @@ window.completeEntry = async function() {
       id:'tmp_'+Date.now(), plate, model,
       vtype:S.W.vtype, vcat:S.W.vcat, vcatName:S.W.vcat,
       custId:S.W.custId, custName:S.customers.find(c=>c.id===S.W.custId)?.name||'Walk-in',
-      svcs:svcDetails.map(s=>s.service_name), svcDetails,
+      svcs:svcDetails.map(s=>s.service_name||s.name||'').filter(Boolean),
+      svcDetails,
       amount:tot, disc, tax, total:tot,
       pay:payMethods.join('+'), payDetail:payMethods.map(m=>({method:m,amount:tot})),
       paid, status:'waiting', enteredAt:now,
