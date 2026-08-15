@@ -3750,27 +3750,89 @@ function _renderRptInner(){
     sbQ('pos_sales').select('*, pos_sale_items(*), customers(name,phone)').order('created_at',{ascending:false}).limit(200)
       .then(({data:sales})=>{
         const list=sales||[];
+        window._posSales=list;
         const totalRev=list.reduce((a,s)=>a+parseFloat(s.total||0),0);
         const todaySales=list.filter(s=>new Date(s.created_at).toDateString()===new Date().toDateString());
         const todayRev=todaySales.reduce((a,s)=>a+parseFloat(s.total||0),0);
-        c.innerHTML=`<div class="g4 mb4">
-          ${kc('Today Sales',frs(todayRev),todaySales.length+' transactions','up')}
-          ${kc('Total Revenue',frs(totalRev),list.length+' all time','up')}
-          ${kc('Avg Sale',frs(list.length?totalRev/list.length:0),'Per transaction','')}
-          ${kc('Items Sold',list.reduce((a,s)=>(a+(s.pos_sale_items||[]).reduce((b,i)=>b+i.qty,0)),0),'Units','')}
+
+        // P&L: calculate cost from products
+        let totalCost=0;
+        const productStats={};
+        list.forEach(s=>(s.pos_sale_items||[]).forEach(i=>{
+          const prod=S.products.find(p=>p.id===i.product_id||p.name===i.product_name);
+          const cost=(prod?.costPrice||prod?.cost_price||0)*i.qty;
+          const rev=parseFloat(i.total||0);
+          totalCost+=cost;
+          if(!productStats[i.product_name]) productStats[i.product_name]={name:i.product_name,qty:0,revenue:0,cost:0};
+          productStats[i.product_name].qty+=i.qty;
+          productStats[i.product_name].revenue+=rev;
+          productStats[i.product_name].cost+=cost;
+        }));
+        const totalProfit=totalRev-totalCost;
+        const margin=totalRev>0?Math.round((totalProfit/totalRev)*100):0;
+
+        const topProducts=Object.values(productStats).sort((a,b)=>b.revenue-a.revenue).slice(0,10);
+
+        c.innerHTML=`
+        <div class="g4 mb4">
+          ${kc('Today Revenue',frs(todayRev),todaySales.length+' sales','up')}
+          ${kc('Total Revenue',frs(totalRev),list.length+' transactions','up')}
+          ${kc('Total Profit',frs(totalProfit),'After product cost',totalProfit>=0?'up':'dn')}
+          ${kc('Profit Margin',margin+'%','Revenue vs cost',margin>=30?'up':'dn')}
         </div>
-        <div class="tw"><table>
-          <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Actions</th></tr></thead>
-          <tbody>${list.map(s=>`<tr>
-            <td style="font-weight:700;color:var(--blue)">${s.invoice_no}</td>
-            <td style="font-size:11px;color:var(--ink3)">${fdt(s.created_at)}</td>
-            <td>${s.customers?.name||'Walk-in'}</td>
-            <td style="font-size:11px">${(s.pos_sale_items||[]).map(i=>i.product_name+'×'+i.qty).join(', ')}</td>
-            <td style="font-weight:700">${frs(parseFloat(s.total||0))}</td>
-            <td><span class="bx bw" style="font-size:10px">${(s.pay_method||'cash').toUpperCase()}</span></td>
-            <td><button class="btn bs bsm" onclick="showPOSSaleDetail('${s.invoice_no}',${JSON.stringify(s).replace(/'/g,"\\'")})">View</button></td>
-          </tr>`).join('')}</tbody>
-        </table></div>`;
+
+        <!-- P&L Summary -->
+        <div class="card mb4">
+          <div class="sec" style="font-size:12px;margin-bottom:12px">💰 Profit & Loss Summary</div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--glt);border-radius:var(--r2)">
+              <span style="font-weight:700">Total Revenue</span><span style="color:var(--green);font-weight:800">${frs(totalRev)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--rlt);border-radius:var(--r2)">
+              <span style="font-weight:700">Total Cost of Goods</span><span style="color:var(--red);font-weight:800">-${frs(totalCost)}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:10px 12px;background:${totalProfit>=0?'var(--glt)':'var(--rlt)'};border-radius:var(--r2);border:2px solid ${totalProfit>=0?'var(--green)':'var(--red)'}">
+              <span style="font-weight:800;font-size:14px">Net Profit</span>
+              <span style="font-weight:900;font-size:14px;color:${totalProfit>=0?'var(--green)':'var(--red)'}">${frs(totalProfit)}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Top Products -->
+        <div class="card mb4">
+          <div class="sec" style="font-size:12px;margin-bottom:12px">🏆 Product Performance</div>
+          <div class="tw"><table>
+            <thead><tr><th>Product</th><th>Qty Sold</th><th>Revenue</th><th>Cost</th><th>Profit</th><th>Margin</th></tr></thead>
+            <tbody>${topProducts.map(p=>{
+              const profit=p.revenue-p.cost;
+              const mg=p.revenue>0?Math.round((profit/p.revenue)*100):0;
+              return`<tr>
+                <td style="font-weight:700">${p.name}</td>
+                <td style="text-align:center">${p.qty}</td>
+                <td style="color:var(--green);font-weight:700">${frs(p.revenue)}</td>
+                <td style="color:var(--red)">${frs(p.cost)}</td>
+                <td style="font-weight:800;color:${profit>=0?'var(--green)':'var(--red)'}">${frs(profit)}</td>
+                <td><span class="bx ${mg>=30?'bok':mg>=15?'bw':'be'}" style="font-size:10px">${mg}%</span></td>
+              </tr>`;}).join('')}</tbody>
+          </table></div>
+        </div>
+
+        <!-- Transactions List -->
+        <div class="card">
+          <div class="sec" style="font-size:12px;margin-bottom:12px">📋 All POS Transactions</div>
+          <div class="tw"><table>
+            <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th></th></tr></thead>
+            <tbody>${list.map(s=>`<tr>
+              <td style="font-weight:700;color:var(--blue)">${s.invoice_no}</td>
+              <td style="font-size:11px;color:var(--ink3)">${fdt(s.created_at)}</td>
+              <td>${s.customers?.name||'Walk-in'}</td>
+              <td style="font-size:11px">${(s.pos_sale_items||[]).map(i=>i.product_name+'×'+i.qty).join(', ')}</td>
+              <td style="font-weight:700">${frs(parseFloat(s.total||0))}</td>
+              <td><span class="bx bw" style="font-size:10px">${(s.pay_method||'cash').toUpperCase()}</span></td>
+              <td><button class="btn bs bsm" onclick="viewPOSSale('${s.id}')">View</button></td>
+            </tr>`).join('')}</tbody>
+          </table></div>
+        </div>`;
       }).catch(()=>{
         c.innerHTML=`<div style="text-align:center;padding:40px;color:var(--ink3)">
           ⚠ POS sales table not set up yet.<br><br>
@@ -3795,6 +3857,12 @@ function _renderRptInner(){
   }
 }
 function setRptTab(t){S.rptTab=t;renderRpt();}
+
+function viewPOSSale(id){
+  const s=(window._posSales||[]).find(x=>x.id===id);
+  if(!s){toast('Sale not found','e');return;}
+  showPOSSaleDetail(s.invoice_no,s);
+}
 
 function showPOSSaleDetail(invNo, sale){
   const items = sale.pos_sale_items||[];
