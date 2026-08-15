@@ -3067,8 +3067,9 @@ async function poscheckout(){
         product_id: isUUID(i.id)?i.id:null,
         product_name: i.name,
         qty: i.qty,
-        unit_price: i.sellingPrice||i.selling_price||0,
-        total: (i.sellingPrice||i.selling_price||0)*i.qty
+        unit_price: parseFloat(i.sellingPrice||i.selling_price||0),
+        cost_price:  parseFloat(i.costPrice||i.cost_price||0),
+        total: parseFloat(i.sellingPrice||i.selling_price||0)*i.qty
       }));
       await sbQ('pos_sale_items').insert(items).catch(()=>{});
 
@@ -3748,25 +3749,30 @@ function _renderRptInner(){
   } else if(S.rptTab==='pos-sales'){
     // Load POS sales from DB
     sbQ('pos_sales').select('*, pos_sale_items(*), customers(name,phone)').order('created_at',{ascending:false}).limit(200)
-      .then(({data:sales})=>{
-        const list=sales||[];
+    sbQ('pos_sales').select('*, pos_sale_items(*), customers(name,phone)').order('created_at',{ascending:false}).limit(200)
+      .then(({data:sales, error})=>{
+        if(error){ c.innerHTML=`<div style="text-align:center;padding:40px;color:var(--ink3)">⚠ POS tables not set up yet.<br><br><button class="btn bp bsm mt2" onclick="gp('admin-panel')">Run QuickWash_POS_Tables.sql in Supabase</button></div>`; return; }
+        const list=(sales||[]).map(s=>({...s, pos_sale_items: s.pos_sale_items||[]}));
         window._posSales=list;
         const totalRev=list.reduce((a,s)=>a+parseFloat(s.total||0),0);
         const todaySales=list.filter(s=>new Date(s.created_at).toDateString()===new Date().toDateString());
         const todayRev=todaySales.reduce((a,s)=>a+parseFloat(s.total||0),0);
 
-        // P&L: calculate cost from products
+        // P&L: use stored cost_price from pos_sale_items, fallback to S.products
         let totalCost=0;
         const productStats={};
         list.forEach(s=>(s.pos_sale_items||[]).forEach(i=>{
-          const prod=S.products.find(p=>p.id===i.product_id||p.name===i.product_name);
-          const cost=(prod?.costPrice||prod?.cost_price||0)*i.qty;
+          // Try stored cost_price first, then lookup from S.products
+          const prod=S.products.find(p=>String(p.id)===String(i.product_id)||p.name===i.product_name);
+          const unitCost=parseFloat(i.cost_price||prod?.costPrice||prod?.cost_price||0);
+          const cost=unitCost*i.qty;
           const rev=parseFloat(i.total||0);
           totalCost+=cost;
-          if(!productStats[i.product_name]) productStats[i.product_name]={name:i.product_name,qty:0,revenue:0,cost:0};
-          productStats[i.product_name].qty+=i.qty;
-          productStats[i.product_name].revenue+=rev;
-          productStats[i.product_name].cost+=cost;
+          const key=i.product_name||'Unknown';
+          if(!productStats[key]) productStats[key]={name:key,qty:0,revenue:0,cost:0,unitCost,unitPrice:parseFloat(i.unit_price||0)};
+          productStats[key].qty+=i.qty;
+          productStats[key].revenue+=rev;
+          productStats[key].cost+=cost;
         }));
         const totalProfit=totalRev-totalCost;
         const margin=totalRev>0?Math.round((totalProfit/totalRev)*100):0;
@@ -3866,27 +3872,55 @@ function viewPOSSale(id){
 
 function showPOSSaleDetail(invNo, sale){
   const items = sale.pos_sale_items||[];
+  const sub = parseFloat(sale.subtotal||sale.total||0);
+  const disc = parseFloat(sale.discount||0);
+  const tot = parseFloat(sale.total||0);
+
   openModal(`${mhd('🧾 '+invNo)}
     <div style="font-family:monospace;background:var(--bg);border:1px solid var(--line2);border-radius:var(--r2);padding:14px;margin-bottom:12px">
-      <div style="text-align:center;margin-bottom:8px">
-        <div style="font-size:14px;font-weight:900">${CFG.bizName}</div>
+      <div style="text-align:center;margin-bottom:10px">
+        <div style="font-size:15px;font-weight:900">${CFG.bizName}</div>
+        <div style="font-size:10px;color:var(--ink3)">${CFG.bizAddr||''} | ${CFG.bizPhone||''}</div>
+        <div style="border-top:1px dashed #ccc;margin:6px 0"></div>
+        <div style="font-size:12px;font-weight:700">Invoice: ${invNo}</div>
         <div style="font-size:10px;color:var(--ink3)">${fdt(sale.created_at)} ${ftm(sale.created_at)}</div>
-        <div style="font-size:11px;font-weight:700">Invoice: ${invNo}</div>
-        ${sale.customers?`<div style="font-size:10px">Customer: ${sale.customers.name}</div>`:''}
+        ${sale.customers?`<div style="font-size:10px">Customer: ${sale.customers.name} | ${sale.customers.phone}</div>`:''}
       </div>
-      <table style="width:100%;font-size:11px;border-collapse:collapse;border-top:1px dashed #ccc;padding-top:6px">
-        <thead><tr><th style="text-align:left;padding:4px 0">Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Total</th></tr></thead>
-        <tbody>${items.map(i=>`<tr><td>${i.product_name}</td><td style="text-align:center">${i.qty}</td><td style="text-align:right">${frs(i.unit_price||0)}</td><td style="text-align:right;font-weight:700">${frs(i.total||0)}</td></tr>`).join('')}</tbody>
+      <table style="width:100%;font-size:11px;border-collapse:collapse">
+        <thead><tr style="border-bottom:1px solid #ccc">
+          <th style="text-align:left;padding:3px 0">Item</th>
+          <th style="text-align:center">Qty</th>
+          <th style="text-align:right">Price</th>
+          <th style="text-align:right">Total</th>
+        </tr></thead>
+        <tbody>
+          ${items.length>0 ? items.map(i=>`<tr>
+            <td style="padding:3px 0">${i.product_name||'Item'}</td>
+            <td style="text-align:center">${i.qty||1}</td>
+            <td style="text-align:right">${frs(parseFloat(i.unit_price||0))}</td>
+            <td style="text-align:right;font-weight:700">${frs(parseFloat(i.total||0))}</td>
+          </tr>`).join('') : '<tr><td colspan="4" style="text-align:center;color:#999;padding:8px">No item details</td></tr>'}
+        </tbody>
       </table>
-      <div style="border-top:1px dashed #ccc;margin-top:6px;padding-top:6px">
-        ${sale.discount>0?`<div style="display:flex;justify-content:space-between;font-size:11px"><span>Discount</span><span>-${frs(sale.discount)}</span></div>`:''}
-        <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:900"><span>TOTAL</span><span>${frs(sale.total)}</span></div>
+      <div style="border-top:1px dashed #ccc;margin-top:8px;padding-top:8px">
+        ${disc>0?`<div style="display:flex;justify-content:space-between;font-size:11px"><span>Subtotal</span><span>${frs(sub)}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--red)"><span>Discount</span><span>-${frs(disc)}</span></div>`:''}
+        <div style="display:flex;justify-content:space-between;font-size:14px;font-weight:900;margin-top:4px"><span>TOTAL</span><span>${frs(tot)}</span></div>
         <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ink3)"><span>Payment</span><span>${(sale.pay_method||'cash').toUpperCase()}</span></div>
+        ${(sale.pts_earned||0)>0?`<div style="text-align:center;font-size:10px;color:purple;margin-top:6px">💜 +${sale.pts_earned} Loyalty Points Earned</div>`:''}
+      </div>
+      <div style="border-top:1px dashed #ccc;margin-top:8px;padding-top:6px;text-align:center;font-size:10px;color:#999">
+        Thank you for shopping at ${CFG.bizName}!
       </div>
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button class="btn bs" onclick="closeModal()">Close</button>
-      <button class="btn bs bsm" onclick="window.print()">🖨 Print</button>
+      <button class="btn bs bsm" onclick="
+        const d=document.getElementById('pos-inv-${sale.id?.slice(-6)||'x'}');
+        const w=window.open('','_blank','width=400,height=600');
+        w.document.write('<html><head><title>${invNo}</title><style>body{font-family:monospace;padding:20px}table{width:100%;border-collapse:collapse}th{border-bottom:1px solid #ccc;padding:4px 0}</style></head><body>'+this.closest('.ov').querySelector('[style*=monospace]').innerHTML+'</body></html>');
+        w.document.close();setTimeout(()=>w.print(),300);
+      ">🖨 Print</button>
     </div>`);
 }
 
