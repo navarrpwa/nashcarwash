@@ -6233,35 +6233,37 @@ window.saveSlPayment = async function(id, total) {
   const log = S.sl.find(l => l.id === id || String(l.id)===String(id));
   if (!log) { toast('Log not found','e'); return; }
 
-  // Get selected payment methods
+  // Use _slPayMethods set by toggleSlPM()
+  const selectedMethods = window._slPayMethods || [];
+  if(!selectedMethods.length){ toast('Select a payment method','e'); return; }
+
+  // Build payment details
   const methods = [];
-  document.querySelectorAll('.pm-check:checked').forEach(cb => {
-    const amt = parseFloat(el('pm-amt-' + cb.value)?.value) || 0;
-    if(amt > 0) methods.push({ method: cb.value, amount: amt });
-  });
-
-  // If no split amounts, use full total with first selected method
-  if(methods.length === 0){
-    const checked = document.querySelector('.pm-check:checked');
-    if(checked) methods.push({ method: checked.value, amount: total });
-    else { toast('Select a payment method','e'); return; }
-  }
-
-  const totalPaid = methods.reduce((a,m) => a+m.amount, 0);
-  if(Math.abs(totalPaid - total) > 1){
-    toast('Payment total must equal '+frs(total),'e'); return;
+  if(selectedMethods.length === 1){
+    methods.push({ method: selectedMethods[0], amount: total });
+  } else {
+    // Split payment — read from spm-* inputs
+    for(const mid of selectedMethods){
+      const amt = parseFloat(el('spm-'+mid)?.value) || 0;
+      if(amt > 0) methods.push({ method: mid, amount: amt });
+    }
+    const totalPaid = methods.reduce((a,m)=>a+m.amount, 0);
+    if(Math.abs(totalPaid - total) > 1){
+      toast('Split amounts must equal '+frs(total),'e'); return;
+    }
   }
 
   const pts = CFG.loyaltyEnabled ? Math.floor(total*(CFG.pointsPerRupee||0.1)) : 0;
   const dbId = isUUID(log.id) ? log.id : (isUUID(log._dbId) ? log._dbId : null);
+  const payNotes = el('pay-notes')?.value || '';
 
   const btn = document.querySelector('.modal .btn.bp'); if(btn) btn.disabled=true;
   try {
     if(dbId){
       // Save payment records
-      const pmtRows = methods.map(m=>({ log_id:dbId, method:m.method, amount:m.amount }));
-      await sbQ('service_log_payments').insert(pmtRows);
-
+      await sbQ('service_log_payments').insert(
+        methods.map(m=>({ log_id:dbId, method:m.method, amount:m.amount, notes:payNotes }))
+      );
       // Mark log as paid
       await sbQ('service_logs').update({
         paid: true,
@@ -6270,13 +6272,14 @@ window.saveSlPayment = async function(id, total) {
         updated_at: new Date().toISOString()
       }).eq('id', dbId);
 
-      // Update customer loyalty
+      // Update customer loyalty in DB
       if(isUUID(log.custId)){
         const cust = S.customers.find(c=>c.id===log.custId);
         if(cust){
-          cust.points = Math.max(0,(cust.points||0)+pts);
+          const newPts = Math.max(0,(cust.points||0)+pts);
+          cust.points = newPts;
           sbQ('customers').update({
-            points: cust.points,
+            points: newPts,
             total_spent: (cust.totalSpent||0)+total,
             last_visit: new Date().toISOString()
           }).eq('id',log.custId).then(()=>{}).catch(()=>{});
@@ -6291,8 +6294,8 @@ window.saveSlPayment = async function(id, total) {
     log.ptsEarned = (log.ptsEarned||0)+pts;
 
     closeModal(); renderSL();
-    toast('✅ Payment recorded'+( pts>0?' | +'+pts+' pts':''),'ok');
-    if(CFG.sms?.autoSendOnPayment) setTimeout(()=>sendSMS(id,true),1000);
+    toast('✅ Payment recorded'+(pts>0?' | +'+pts+' pts':'')+(payNotes?' — '+payNotes:''),'ok');
+    if(CFG.sms?.autoSendOnPayment) setTimeout(()=>sendSMS(id,true),800);
 
   } catch(e) {
     toast('Payment save failed: '+(e.message||'DB error'),'e');
