@@ -6182,51 +6182,6 @@ window.slAdv = async function(id) {
 };
 
 // ── OVERRIDE: Save service log edit ───────────────────────────
-const _origSaveSlEdit = window.saveSlEdit;
-window.saveSlEdit = async function(id) {
-  const log = S.sl.find(l => l.id === id);
-  if (!log) return;
-
-  QB.loading('Saving…');
-  try {
-    const changes = {
-      discount: parseFloat(el('sle-disc')?.value) || 0,
-      notes: el('sle-notes')?.value || '',
-      estimated_mins: parseInt(el('sle-est')?.value) || 0,
-      staff_name: el('sle-staff')?.value || ''
-    };
-    // Collect selected services
-    const svcDetails = [];
-    document.querySelectorAll('.sle-svc:checked').forEach(cb => {
-      const svc = S.washSvcs.find(s => String(s.id) === cb.value);
-      if (svc) {
-        const price = svc.prices?.[log.vcatName] || svc.basePrice;
-        svcDetails.push({ log_id: id, service_id: svc.id, service_name: svc.name, price, qty: 1 });
-      }
-    });
-
-    await QB.editServiceLog(id, changes, S.user?.name);
-    // Update services
-    if (svcDetails.length) {
-      await sbQ('service_log_services').delete().eq('log_id', id);
-      await sbQ('service_log_services').insert(svcDetails);
-      changes.services = svcDetails;
-    }
-
-    // Optimistic update
-    Object.assign(log, changes);
-    if (svcDetails.length) log.svcs = svcDetails.map(s => s.service_name);
-
-    QB.doneLoading();
-    closeModal();
-    renderSL();
-    toast('Changes saved ✓', 'ok');
-  } catch(err) {
-    QB.doneLoading();
-    QB.error(err, 'Could not save. Please try again.');
-  }
-};
-
 // ── OVERRIDE: Record payment ──────────────────────────────────
 const _origSaveSlPayment = window.saveSlPayment;
 window.saveSlPayment = async function(id, total) {
@@ -6962,10 +6917,12 @@ window.saveQA = async function() {
 
 // ── Service Log Edit ─────────────────────────────────────────
 window.saveSlEdit = async function(id) {
-  const l = S.sl.find(x => x.id === id); if (!l) return;
+  const l = S.sl.find(x => x.id === id || String(x.id)===String(id));
+  if (!l) { toast('Log not found','e'); return; }
   const cat = l.vcatName || l.vcat || 'Sedan';
   const checked = [...document.querySelectorAll('input[name="sl-svc"]:checked')].map(x=>x.value);
   if (!checked.length) { toast('Select at least one service', 'e'); return; }
+
   const sub = checked.reduce((a,name)=>{
     const s=S.washSvcs.find(x=>x.name===name||x.service_name===name);
     return a+(s?gPrice(s,cat):0);
@@ -6973,37 +6930,70 @@ window.saveSlEdit = async function(id) {
   const disc   = parseFloat(el('se-disc')?.value) || 0;
   const useTax = el('se-tax')?.value==='1';
   const tax    = useTax ? Math.round(Math.max(0,sub-disc)*CFG.gstRate/100) : 0;
+  const newAmt = Math.max(0,sub-disc)+tax;
   const newSts = el('se-status')?.value;
-  const dbId   = isUUID(l.id) ? l.id : l._dbId;
+  const dbId   = isUUID(l.id) ? l.id : (isUUID(l._dbId)?l._dbId:null);
 
-  l.svcs = checked; l.disc = disc; l.tax = tax; l.amount = Math.max(0,sub-disc)+tax;
-  l.staff = el('se-staff')?.value || l.staff;
-  l.estimatedMins = parseInt(el('se-est')?.value) || l.estimatedMins || 0;
-  l.notes = el('se-notes')?.value || '';
-  if (newSts && newSts !== l.status) {
-    const tf={received:'receivedAt',washing:'washingAt',interior:'interiorAt',
-              detailing:'detailingAt',qc:'qcAt',ready:'readyAt'}[newSts];
-    l.status=newSts; if(tf&&!l[tf]) l[tf]=new Date().toISOString();
-  }
-  logEdit(l, 'Edited by ' + (S.user?.name||'Staff'));
-  closeModal(); toast('Service log updated ✓','ok'); renderSL();
+  const btn=document.querySelector('.modal .btn.bp'); if(btn) btn.disabled=true;
+  try {
+    // Update local state first
+    l.svcs = checked;
+    l.disc = disc; l.tax = tax; l.amount = newAmt; l.total = newAmt;
+    l.staff = el('se-staff')?.value || l.staff;
+    l.estimatedMins = parseInt(el('se-est')?.value) || l.estimatedMins || 0;
+    l.notes = el('se-notes')?.value || '';
+    if(newSts && newSts !== l.status){
+      const tf={received:'receivedAt',washing:'washingAt',interior:'interiorAt',
+                detailing:'detailingAt',qc:'qcAt',ready:'readyAt'}[newSts];
+      l.status=newSts; if(tf&&!l[tf]) l[tf]=new Date().toISOString();
+    }
+    logEdit(l, 'Edited by '+(S.user?.name||'Staff'));
+    closeModal(); toast('Service log updated ✓','ok'); renderSL();
 
-  if (dbId) {
-    try {
-      await dbUpdate('service_logs', dbId, {
-        discount:l.disc, tax:l.tax, notes:l.notes,
-        estimated_mins:l.estimatedMins, staff_name:l.staff, status:l.status
-      });
-      // Rewrite services
+    // Save to DB
+    if(dbId){
+      await sbQ('service_logs').update({
+        amount: newAmt,
+        discount: disc,
+        tax,
+        notes: l.notes,
+        estimated_mins: l.estimatedMins,
+        staff_name: l.staff,
+        status: l.status,
+        updated_at: new Date().toISOString()
+      }).eq('id', dbId);
+
+      // Rewrite service line items
       const svcs = checked.map(name=>{
         const s=S.washSvcs.find(x=>x.name===name||x.service_name===name);
-        return { log_id:dbId, service_id: isUUID(s?.id)?s.id:null,
-          service_name: name, price: s?gPrice(s,cat):0, qty:1 };
+        return { log_id:dbId,
+          service_id: isUUID(s?.id)?s.id:null,
+          service_name: name,
+          price: s?gPrice(s,cat):0,
+          qty: 1 };
       });
       await sbQ('service_log_services').delete().eq('log_id',dbId);
-      if (svcs.length) await sbQ('service_log_services').insert(svcs);
-      await dbInsert('service_log_edits',{log_id:dbId,edited_by:S.user?.name||'Staff',action:'edited',edited_at:new Date().toISOString()});
-    } catch(e) { console.warn('[DB] Log edit:', e?.message); }
+      if(svcs.length) await sbQ('service_log_services').insert(svcs);
+
+      // Log the edit
+      try {
+        await sbQ('service_log_edits').insert({
+          log_id: dbId,
+          edited_by: S.user?.name||'Staff',
+          action: 'edited',
+          edited_at: new Date().toISOString()
+        });
+      } catch(e){}
+
+      console.log('[QuickWash] ✅ Log edited in DB:', dbId);
+    } else {
+      toast('Saved locally — log not in DB yet','w');
+    }
+  } catch(e) {
+    toast('Edit save failed: '+(e.message||'DB error'),'e');
+    console.error('[DB] saveSlEdit:',e);
+  } finally {
+    if(btn) btn.disabled=false;
   }
 };
 
