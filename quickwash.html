@@ -3031,36 +3031,132 @@ async function saveQAC(){
     toast('Customer saved locally — check DB connection','w');
   }
 }
-function poscheckout(){
-  if(window._posSubmitting){toast('Processing…','w');return;}window._posSubmitting=true;
+async function poscheckout(){
+  if(window._posSubmitting){toast('Processing…','w');return;}
+  window._posSubmitting=true;
   if(!S.posCart.length){window._posSubmitting=false;toast('Cart empty','e');return;}
-  const tot=Math.max(0,S.posCart.reduce((a,i)=>a+((i.sellingPrice||i.selling_price||0)*i.qty),0)-(parseFloat(el('posdisc')?.value)||0));
-  // Deduct stock
-  S.posCart.forEach(item=>{const p=S.products.find(x=>x.id===item.id);if(p)p.stock=Math.max(0,p.stock-item.qty);});
+
+  const disc = parseFloat(el('posdisc')?.value)||0;
+  const sub  = S.posCart.reduce((a,i)=>a+((i.sellingPrice||i.selling_price||0)*i.qty),0);
+  const tot  = Math.max(0,sub-disc);
+  const pay  = el('pospy')?.value||'cash';
+  const now  = new Date().toISOString();
+  const invNo= 'POS-'+String(Date.now()).slice(-6);
+
+  // Loyalty points
   const pts=S.posCust&&CFG.loyaltyEnabled?Math.floor(tot*CFG.pointsPerRupee):0;
-  if(S.posCust&&pts>0){const c=S.customers.find(x=>x.id===S.posCust.id);if(c){c.points=(c.points||0)+pts;c.visits++;c.totalSpent+=tot;c.lastVisit=new Date().toISOString();checkVisitRewards(c);}}
-  S.txns.push({id:S.txns.length+1,rcpt:'POS'+String(S.txns.length+1).padStart(5,'0'),type:'product',plate:'—',svcs:S.posCart.map(i=>i.name),tot,pay:el('pospy')?.value||'cash',status:'completed',date:new Date().toISOString(),custId:S.posCust?.id||null});
-  if(pts>0)toast('+'+pts+' loyalty points awarded','ok');
-  toast('Sale complete!','ok');
-  // ── Save POS sale to Supabase ────────────────────────────────
-  const posItems = [...S.posCart];
-  const posCustId = S.posCust?.id || null;
+  if(S.posCust&&pts>0){
+    const c=S.customers.find(x=>x.id===S.posCust.id);
+    if(c){c.points=(c.points||0)+pts;c.visits++;c.totalSpent+=tot;c.lastVisit=now;}
+  }
+
+  // Save to DB
+  try {
+    const {data:sale,error:sErr} = await sbQ('pos_sales').insert({
+      invoice_no: invNo,
+      customer_id: isUUID(S.posCust?.id)?S.posCust.id:null,
+      subtotal: sub, discount: disc, total: tot,
+      pay_method: pay, pts_earned: pts,
+      staff_name: S.user?.name||'', created_at: now
+    }).select().single();
+
+    if(!sErr && sale){
+      // Save line items
+      const items = S.posCart.map(i=>({
+        sale_id: sale.id,
+        product_id: isUUID(i.id)?i.id:null,
+        product_name: i.name,
+        qty: i.qty,
+        unit_price: i.sellingPrice||i.selling_price||0,
+        total: (i.sellingPrice||i.selling_price||0)*i.qty
+      }));
+      await sbQ('pos_sale_items').insert(items).catch(()=>{});
+
+      // Deduct stock in DB
+      for(const item of S.posCart){
+        const dbId=isUUID(item.id)?item.id:null;
+        if(dbId){
+          const {data:p}=await sbQ('inventory_products').select('stock').eq('id',dbId).single().catch(()=>({data:null}));
+          if(p) await sbQ('inventory_products').update({stock:Math.max(0,(p.stock||0)-item.qty)}).eq('id',dbId).catch(()=>{});
+        }
+        // Update local stock
+        const lp=S.products.find(x=>x.id===item.id);
+        if(lp) lp.stock=Math.max(0,lp.stock-item.qty);
+      }
+    }
+  } catch(e){ console.warn('[POS] DB save:',e?.message); }
+
+  // Add to local txns
+  S.txns.push({id:invNo,rcpt:invNo,type:'product',plate:'—',
+    svcs:S.posCart.map(i=>i.name),tot,pay,status:'completed',
+    date:now,custId:S.posCust?.id||null});
+
+  if(pts>0) toast('+'+pts+' loyalty points awarded','ok');
+
+  // Show invoice
+  const invoiceCart=[...S.posCart];
+  const invoiceCust=S.posCust;
   S.posCart=[];S.posCust=null;
   if(el('pos-cs'))el('pos-cs').style.display='none';
   if(el('pos-loyalty'))el('pos-loyalty').style.display='none';
   if(el('pos-cq'))el('pos-cq').value='';
   window._posSubmitting=false;
   renderPosCart();rpos();
-  // Deduct stock in DB
-  posItems.forEach(item => {
-    const dbId = item._dbId || (typeof item.id==='string'&&item.id.length>10?item.id:null);
-    if(dbId && typeof sbQ==='function'){
-      sbQ('inventory_products').select('stock').eq('id',dbId).single()
-        .then(({data:p})=>{
-          if(p) sbQ('inventory_products').update({stock:Math.max(0,(p.stock||0)-item.qty),updated_at:new Date().toISOString()}).eq('id',dbId).then(()=>{}).catch(()=>{});
-        }).catch(()=>{});
-    }
-  });
+
+  // Show printable invoice modal
+  showPosInvoice({invNo,items:invoiceCart,cust:invoiceCust,sub,disc,tot,pay,pts,date:now});
+}
+
+function showPosInvoice({invNo,items,cust,sub,disc,tot,pay,pts,date}){
+  const itemRows=items.map(i=>`
+    <tr><td>${i.name}</td><td style="text-align:center">${i.qty}</td>
+    <td style="text-align:right">${frs(i.sellingPrice||i.selling_price||0)}</td>
+    <td style="text-align:right;font-weight:700">${frs((i.sellingPrice||i.selling_price||0)*i.qty)}</td></tr>`).join('');
+
+  openModal(`${mhd('🧾 POS Invoice')}
+    <div id="pos-invoice-print" style="font-family:monospace;background:#fff;border:1px solid var(--line2);border-radius:var(--r2);padding:16px;margin-bottom:12px">
+      <div style="text-align:center;margin-bottom:10px">
+        <div style="font-size:16px;font-weight:900;letter-spacing:1px">${CFG.bizName}</div>
+        <div style="font-size:10px;color:#666">${CFG.bizAddr||''} | ${CFG.bizPhone||''}</div>
+        <div style="border-top:1px dashed #ccc;margin:6px 0"></div>
+        <div style="font-size:11px;font-weight:700">INVOICE: ${invNo}</div>
+        <div style="font-size:10px;color:#666">${fdt(date)} ${ftm(date)}</div>
+        ${cust?`<div style="font-size:10px;color:#666">Customer: ${cust.name} | ${cust.phone}</div>`:''}
+      </div>
+      <table style="width:100%;font-size:11px;border-collapse:collapse">
+        <thead><tr style="border-bottom:1px solid #ccc">
+          <th style="text-align:left;padding:3px 0">Item</th>
+          <th style="text-align:center">Qty</th>
+          <th style="text-align:right">Price</th>
+          <th style="text-align:right">Total</th>
+        </tr></thead>
+        <tbody>${itemRows}</tbody>
+      </table>
+      <div style="border-top:1px dashed #ccc;margin-top:8px;padding-top:8px">
+        <div style="display:flex;justify-content:space-between;font-size:11px"><span>Subtotal</span><span>${frs(sub)}</span></div>
+        ${disc>0?`<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--red)"><span>Discount</span><span>-${frs(disc)}</span></div>`:''}
+        <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:900;margin-top:4px"><span>TOTAL</span><span>${frs(tot)}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#666"><span>Payment</span><span>${pay.toUpperCase()}</span></div>
+        ${pts>0?`<div style="text-align:center;font-size:10px;color:purple;margin-top:6px">💜 +${pts} Loyalty Points Earned</div>`:''}
+      </div>
+      <div style="border-top:1px dashed #ccc;margin-top:8px;padding-top:6px;text-align:center;font-size:10px;color:#666">
+        Thank you for shopping at ${CFG.bizName}!
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn bs" onclick="closeModal()">Close</button>
+      <button class="btn bs bsm" onclick="
+        const w=window.open('','_blank','width=400,height=600');
+        w.document.write('<html><head><title>${invNo}</title></head><body>'+document.getElementById(\'pos-invoice-print\').innerHTML+'</body></html>');
+        w.document.close();w.print();
+      ">🖨 Print</button>
+      <button class="btn" style="background:#25D366;color:#fff;border:none;padding:8px 14px;border-radius:var(--r);font-weight:700;cursor:pointer" onclick="
+        const msg='*${CFG.bizName}* - Receipt %0A%0AInvoice: ${invNo}%0ADate: ${fdt(date)}%0A%0AItems:%0A${items.map(i=>encodeURIComponent(i.name+' x'+i.qty+' = '+frs((i.sellingPrice||i.selling_price||0)*i.qty))).join('%0A')}%0A%0ATotal: *${frs(tot)}*%0APayment: ${pay.toUpperCase()}%0A%0AThank you! 🙏';
+        const ph='${cust?.phone||''}';
+        if(ph){const fp=ph.replace(/[^0-9]/g,'');window.open('https://wa.me/'+(fp.length===10?'91':'')+fp+'?text='+msg,'_blank');}
+        else toast('No customer phone','w');
+      ">💬 WhatsApp</button>
+    </div>`);
 }
 // ══════════════════════════════════════════════════════════
 // CUSTOMERS
@@ -3629,7 +3725,7 @@ function _renderRptInner(){
       date:l.deliveredAt||l.enteredAt, custId:l.custId
     }));
   }
-  el('rpt-tabs').innerHTML=tabs(['revenue','inventory','profit','staff'],(S.rptTab||'revenue'),"setRptTab");
+  el('rpt-tabs').innerHTML=tabs(['revenue','pos-sales','inventory','profit','staff'],(S.rptTab||'revenue'),"setRptTab");
   const c=el('rpt-content');
   const ms=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const curYear=new Date().getFullYear();
@@ -3649,7 +3745,40 @@ function _renderRptInner(){
       const dl=[],dr=[];for(let i=6;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);dl.push(d.toLocaleDateString('en',{day:'numeric',month:'short'}));dr.push((S.txns||[]).filter(t=>new Date(t.date).toDateString()===d.toDateString()).reduce((a,t)=>a+(t.tot||0),0));}
       mkch('c-day',{type:'line',data:{labels:dl,datasets:[{data:dr,borderColor:'#2563EB',borderWidth:2,pointRadius:3,fill:true,backgroundColor:'rgba(37,99,235,.06)',tension:.4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{grid:{color:'#F1F5F9'},ticks:{callback:v=>'₹'+v}}}}});
     },100);
-  } else if(S.rptTab==='inventory'){
+  } else if(S.rptTab==='pos-sales'){
+    // Load POS sales from DB
+    sbQ('pos_sales').select('*, pos_sale_items(*), customers(name,phone)').order('created_at',{ascending:false}).limit(200)
+      .then(({data:sales})=>{
+        const list=sales||[];
+        const totalRev=list.reduce((a,s)=>a+parseFloat(s.total||0),0);
+        const todaySales=list.filter(s=>new Date(s.created_at).toDateString()===new Date().toDateString());
+        const todayRev=todaySales.reduce((a,s)=>a+parseFloat(s.total||0),0);
+        c.innerHTML=`<div class="g4 mb4">
+          ${kc('Today Sales',frs(todayRev),todaySales.length+' transactions','up')}
+          ${kc('Total Revenue',frs(totalRev),list.length+' all time','up')}
+          ${kc('Avg Sale',frs(list.length?totalRev/list.length:0),'Per transaction','')}
+          ${kc('Items Sold',list.reduce((a,s)=>(a+(s.pos_sale_items||[]).reduce((b,i)=>b+i.qty,0)),0),'Units','')}
+        </div>
+        <div class="tw"><table>
+          <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Actions</th></tr></thead>
+          <tbody>${list.map(s=>`<tr>
+            <td style="font-weight:700;color:var(--blue)">${s.invoice_no}</td>
+            <td style="font-size:11px;color:var(--ink3)">${fdt(s.created_at)}</td>
+            <td>${s.customers?.name||'Walk-in'}</td>
+            <td style="font-size:11px">${(s.pos_sale_items||[]).map(i=>i.product_name+'×'+i.qty).join(', ')}</td>
+            <td style="font-weight:700">${frs(parseFloat(s.total||0))}</td>
+            <td><span class="bx bw" style="font-size:10px">${(s.pay_method||'cash').toUpperCase()}</span></td>
+            <td><button class="btn bs bsm" onclick="showPOSSaleDetail('${s.invoice_no}',${JSON.stringify(s).replace(/'/g,"\\'")})">View</button></td>
+          </tr>`).join('')}</tbody>
+        </table></div>`;
+      }).catch(()=>{
+        c.innerHTML=`<div style="text-align:center;padding:40px;color:var(--ink3)">
+          ⚠ POS sales table not set up yet.<br><br>
+          <button class="btn bp bsm" onclick="setupPOSTables()">🔧 Setup POS Tables</button>
+        </div>`;
+      });
+    c.innerHTML='<div style="text-align:center;padding:30px;color:var(--ink3)">Loading POS sales…</div>';
+    return;
     const totalVal=S.products.reduce((a,p)=>a+(p.costPrice*p.stock),0);const sellVal=S.products.reduce((a,p)=>a+(p.sellingPrice*p.stock),0);
     c.innerHTML=`<div class="g4 mb4">${kc('Stock Value (Cost)',frs(totalVal),'','up')}${kc('Stock Value (Sell)',frs(sellVal),'','up')}${kc('Potential Profit',frs(sellVal-totalVal),'If all sold','up')}${kc('Items',S.products.length,'Products','')}</div>
     <div class="tw"><table><thead><tr><th>Product</th><th>Stock</th><th>Cost</th><th>Selling</th><th>Profit/Unit</th><th>Stock Value</th><th>Potential</th></tr></thead><tbody>${S.products.map(p=>`<tr><td style="font-weight:700">${p.name}</td><td>${p.stock}</td><td>${frs(p.costPrice)}</td><td>${frs(p.sellingPrice)}</td><td style="color:var(--green);font-weight:700">${frs(p.sellingPrice-p.costPrice)}</td><td>${frs(p.costPrice*p.stock)}</td><td>${frs(p.sellingPrice*p.stock)}</td></tr>`).join('')}</tbody></table></div>`;
@@ -3666,6 +3795,36 @@ function _renderRptInner(){
   }
 }
 function setRptTab(t){S.rptTab=t;renderRpt();}
+
+function showPOSSaleDetail(invNo, sale){
+  const items = sale.pos_sale_items||[];
+  openModal(`${mhd('🧾 '+invNo)}
+    <div style="font-family:monospace;background:var(--bg);border:1px solid var(--line2);border-radius:var(--r2);padding:14px;margin-bottom:12px">
+      <div style="text-align:center;margin-bottom:8px">
+        <div style="font-size:14px;font-weight:900">${CFG.bizName}</div>
+        <div style="font-size:10px;color:var(--ink3)">${fdt(sale.created_at)} ${ftm(sale.created_at)}</div>
+        <div style="font-size:11px;font-weight:700">Invoice: ${invNo}</div>
+        ${sale.customers?`<div style="font-size:10px">Customer: ${sale.customers.name}</div>`:''}
+      </div>
+      <table style="width:100%;font-size:11px;border-collapse:collapse;border-top:1px dashed #ccc;padding-top:6px">
+        <thead><tr><th style="text-align:left;padding:4px 0">Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Total</th></tr></thead>
+        <tbody>${items.map(i=>`<tr><td>${i.product_name}</td><td style="text-align:center">${i.qty}</td><td style="text-align:right">${frs(i.unit_price||0)}</td><td style="text-align:right;font-weight:700">${frs(i.total||0)}</td></tr>`).join('')}</tbody>
+      </table>
+      <div style="border-top:1px dashed #ccc;margin-top:6px;padding-top:6px">
+        ${sale.discount>0?`<div style="display:flex;justify-content:space-between;font-size:11px"><span>Discount</span><span>-${frs(sale.discount)}</span></div>`:''}
+        <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:900"><span>TOTAL</span><span>${frs(sale.total)}</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--ink3)"><span>Payment</span><span>${(sale.pay_method||'cash').toUpperCase()}</span></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn bs" onclick="closeModal()">Close</button>
+      <button class="btn bs bsm" onclick="window.print()">🖨 Print</button>
+    </div>`);
+}
+
+async function setupPOSTables(){
+  toast('Run the SQL file in Supabase to set up POS tables','w');
+}
 // ══════════════════════════════════════════════════════════
 // LOYALTY PROGRAM
 // ══════════════════════════════════════════════════════════
