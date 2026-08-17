@@ -514,8 +514,9 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
           <div class="wiz-steps" id="wiz-steps">
             <div class="ws on" id="ws-0"><div class="ws-n">1</div><div class="ws-l">Plate</div></div>
             <div class="ws" id="ws-1"><div class="ws-n">2</div><div class="ws-l">Details</div></div>
-            <div class="ws" id="ws-2"><div class="ws-n">3</div><div class="ws-l">Services</div></div>
-            <div class="ws" id="ws-3"><div class="ws-n">4</div><div class="ws-l">Payment</div></div>
+            <div class="ws" id="ws-2"><div class="ws-n">3</div><div class="ws-l">Inspect</div></div>
+            <div class="ws" id="ws-3"><div class="ws-n">4</div><div class="ws-l">Services</div></div>
+            <div class="ws" id="ws-4"><div class="ws-n">5</div><div class="ws-l">Payment</div></div>
           </div>
           <!-- Step 1 -->
           <div class="wp on card" id="wp-0">
@@ -553,20 +554,21 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
               <div class="sec" style="font-size:12px;margin-bottom:8px">Category <span style="color:var(--ink3);font-weight:500">(sets pricing tier)</span></div>
               <div class="vcat-grid" id="vcat-grid"></div>
             </div>
-            <div class="row jb mt4"><button class="btn bs" onclick="wizGo(0)">← Back</button><button class="btn bp blg" id="btn1" onclick="wizGo(2)" disabled>Next: Services →</button></div>
+            <div class="row jb mt4"><button class="btn bs" onclick="wizGo(0)">← Back</button><button class="btn bp blg" id="btn1" onclick="wizGo(2)" disabled>Next: Inspection →</button></div>
           </div>
-          <!-- Step 3 -->
+          <!-- Step 3 — Inspection -->
           <div class="wp card" id="wp-2">
+            <div id="insp-content"></div>
+          </div>
+          <!-- Step 4 — Services -->
+          <div class="wp card" id="wp-3">
             <div class="row aic jb mb3">
               <div class="sec" style="margin:0">🧴 Select Services & Packages</div>
               <div style="font-size:11px;color:var(--ink3)">Pricing for: <strong id="pfor" style="color:var(--blue)">Standard</strong></div>
             </div>
-            <!-- Package quick-select -->
             <div id="pkg-quick" style="margin-bottom:14px"></div>
             <div class="svc-sel-grid" id="svc-sel-grid"></div>
-            <!-- Active offers -->
             <div id="offer-strip" style="margin-top:12px"></div>
-            <!-- Loyalty points -->
             <div id="loyalty-strip" style="margin-top:8px"></div>
             <div style="background:#fff;border:1px solid var(--line);border-radius:var(--r2);padding:12px;margin-top:12px" id="svc-strip">
               <div class="row jb aic">
@@ -574,10 +576,10 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
                 <div style="font-size:18px;font-weight:800;color:var(--blue)" id="svc-tot">₹0.00</div>
               </div>
             </div>
-            <div class="row jb mt4"><button class="btn bs" onclick="wizGo(1)">← Back</button><button class="btn bp blg" id="btn2" onclick="wizGo(3)" disabled>Next: Payment →</button></div>
+            <div class="row jb mt4"><button class="btn bs" onclick="wizGo(2)">← Back</button><button class="btn bp blg" id="btn2" onclick="wizGo(4)" disabled>Next: Payment →</button></div>
           </div>
-          <!-- Step 4 -->
-          <div class="wp card" id="wp-3">
+          <!-- Step 5 — Payment -->
+          <div class="wp card" id="wp-4">
             <div class="sec mb3">💳 Payment</div>
             <div style="background:var(--bg);border-radius:var(--r2);padding:12px;margin-bottom:16px">
               <div class="sec" style="font-size:11px;margin-bottom:8px">Order Summary</div>
@@ -613,7 +615,7 @@ input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--blue)}
             <div id="credit-sec" style="display:none;margin-top:10px;background:var(--rlt);border:1.5px solid #FECACA;border-radius:var(--r);padding:11px">
               <div style="font-size:12px;font-weight:700;color:var(--red)">⚠ Pay After Wash — Balance Due: <span id="cred-due">₹0</span></div>
             </div>
-            <div class="row jb mt4"><button class="btn bs" onclick="wizGo(2)">← Back</button><button class="btn blg bfull" style="background:var(--green)" onclick="completeEntry()">✓ Confirm & Start Wash</button></div>
+            <div class="row jb mt4"><button class="btn bs" onclick="wizGo(3)">← Back</button><button class="btn blg bfull" style="background:var(--green)" onclick="completeEntry()">✓ Confirm & Start Wash</button></div>
           </div>
         </div>
       </div>
@@ -1910,7 +1912,9 @@ function initVE(){
   if(S.wizStep===0)resetWiz();
 }
 function resetWiz(){
-  S.wizStep=0;S.W={plate:'',custId:null,cust:null,vname:'',brand:'',vtype:'',vcat:'',svcs:[],disc:0,payMethods:['cash'],splits:{},useTax:false,appliedOffer:null,ptsRedeem:0};
+  S.wizStep=0;
+  S.W={plate:'',custId:null,cust:null,vname:'',brand:'',vtype:'',vcat:'',svcs:[],disc:0,payMethods:['cash'],splits:{},useTax:false,appliedOffer:null,ptsRedeem:0,_insp:null,_inspId:null,_inspNo:null};
+  window._lastEntryTime=0;
   document.querySelectorAll('.wp').forEach(p=>p.classList.remove('on'));
   document.querySelectorAll('.ws').forEach(w=>w.classList.remove('on','done'));
   el('wp-0').classList.add('on');el('ws-0').classList.add('on');
@@ -1925,9 +1929,339 @@ function wizNav(step){
   document.querySelectorAll('.ws').forEach((w,i)=>{w.classList.remove('on','done');if(i<step)w.classList.add('done');else if(i===step)w.classList.add('on');});
   window.scrollTo(0,0);
 }
-function wizGo(step){if(step===1)renderVD();else if(step===2)renderSvcSel();else if(step===3)renderPayStep();wizNav(step);}
+function wizGo(step){
+  if(step===1) renderVD();
+  else if(step===2) renderInspection();
+  else if(step===3) renderSvcSel();
+  else if(step===4) renderPayStep();
+  wizNav(step);
+}
 
-// Step 1 - Plate
+// ── STEP 3: VEHICLE INSPECTION ──────────────────────────────────
+function renderInspection(){
+  if(!S.W._insp) S.W._insp={
+    damagePoints:[], photos:[], noDamage:false, notes:'',
+    custAck:false, custName:S.W.cust?.name||'', saved:false
+  };
+  const insp=S.W._insp;
+  const dp=insp.damagePoints;
+
+  const damageTypes=['Scratch','Dent','Crack','Paint Damage','Broken','Other'];
+  const zones=[
+    {id:'front',   label:'Front',      x:50,  y:15, emoji:'⬆'},
+    {id:'rear',    label:'Rear',       x:50,  y:85, emoji:'⬇'},
+    {id:'left',    label:'Left Side',  x:15,  y:50, emoji:'⬅'},
+    {id:'right',   label:'Right Side', x:85,  y:50, emoji:'➡'},
+    {id:'hood',    label:'Hood',       x:50,  y:28, emoji:'🔝'},
+    {id:'roof',    label:'Roof',       x:50,  y:50, emoji:'📐'},
+    {id:'trunk',   label:'Trunk',      x:50,  y:72, emoji:'🔙'},
+    {id:'fl-door', label:'Front Left Door',  x:28, y:40, emoji:'🚪'},
+    {id:'fr-door', label:'Front Right Door', x:72, y:40, emoji:'🚪'},
+    {id:'rl-door', label:'Rear Left Door',   x:28, y:62, emoji:'🚪'},
+    {id:'rr-door', label:'Rear Right Door',  x:72, y:62, emoji:'🚪'},
+    {id:'wshield', label:'Windshield',        x:50, y:22, emoji:'🪟'},
+    {id:'rwshield',label:'Rear Windshield',   x:50, y:78, emoji:'🪟'},
+    {id:'fl-wheel',label:'Front Left Wheel',  x:20, y:32, emoji:'🛞'},
+    {id:'fr-wheel',label:'Front Right Wheel', x:80, y:32, emoji:'🛞'},
+    {id:'rl-wheel',label:'Rear Left Wheel',   x:20, y:70, emoji:'🛞'},
+    {id:'rr-wheel',label:'Rear Right Wheel',  x:80, y:70, emoji:'🛞'},
+    {id:'bumper-f',label:'Front Bumper',      x:50, y:10, emoji:'🚧'},
+    {id:'bumper-r',label:'Rear Bumper',        x:50, y:90, emoji:'🚧'},
+    {id:'mirror-l',label:'Left Mirror',        x:22, y:43, emoji:'🔲'},
+    {id:'mirror-r',label:'Right Mirror',       x:78, y:43, emoji:'🔲'},
+  ];
+
+  // Damage dots on map
+  const dotsSVG=dp.map(d=>{
+    const z=zones.find(z=>z.id===d.zone)||{x:50,y:50};
+    const col=d.type==='Scratch'?'#f59e0b':d.type==='Dent'?'#ef4444':d.type==='Crack'?'#8b5cf6':d.type==='Paint Damage'?'#3b82f6':'#6b7280';
+    return`<circle cx="${z.x}" cy="${z.y}" r="4" fill="${col}" stroke="#fff" stroke-width="1.5" opacity="0.9"/><text x="${z.x}" y="${z.y+1}" text-anchor="middle" dominant-baseline="middle" font-size="3" fill="#fff">${d.type[0]}</text>`;
+  }).join('');
+
+  const dpHtml=dp.length?dp.map((d,i)=>`
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:var(--bg);border-radius:var(--r);margin-bottom:5px;font-size:12px">
+      <span><strong>${d.type}</strong> — ${zones.find(z=>z.id===d.zone)?.label||d.zone}</span>
+      <button onclick="S.W._insp.damagePoints.splice(${i},1);renderInspection()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 4px">✕</button>
+    </div>`).join(''):'<div style="font-size:12px;color:var(--ink3);padding:8px 0">No damage recorded yet</div>';
+
+  const photoHtml=insp.photos.map((p,i)=>`
+    <div style="position:relative;width:70px;height:70px;border-radius:6px;overflow:hidden;flex-shrink:0">
+      <img src="${p.preview||p.url}" style="width:100%;height:100%;object-fit:cover">
+      <div style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.5);border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;cursor:pointer" onclick="S.W._insp.photos.splice(${i},1);renderInspection()"><span style="color:#fff;font-size:10px">✕</span></div>
+      <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.4);font-size:8px;color:#fff;text-align:center;padding:2px">${p.type||'photo'}</div>
+    </div>`).join('');
+
+  el('insp-content').innerHTML=`
+    <div class="sec mb3">🔍 Pre-Wash Vehicle Inspection</div>
+    <div style="background:var(--blt);border-radius:var(--r2);padding:10px 14px;margin-bottom:14px;font-size:11px;color:var(--ink2)">
+      Record any existing damage on <strong>${S.W.plate}</strong> before washing. This protects both the customer and Nash Car Wash.
+    </div>
+
+    <!-- No Damage Toggle -->
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border:2px solid ${insp.noDamage?'var(--green)':'var(--line2)'};border-radius:var(--r2);margin-bottom:14px;cursor:pointer;background:${insp.noDamage?'var(--glt)':''}" onclick="S.W._insp.noDamage=!S.W._insp.noDamage;renderInspection()">
+      <div><div style="font-size:13px;font-weight:800">✅ No Visible Damage</div><div style="font-size:11px;color:var(--ink3)">Vehicle appears damage-free on inspection</div></div>
+      <div style="width:22px;height:22px;border-radius:50%;border:2px solid ${insp.noDamage?'var(--green)':'var(--line2)'};background:${insp.noDamage?'var(--green)':'transparent'};display:flex;align-items:center;justify-content:center">
+        ${insp.noDamage?'<span style="color:#fff;font-size:12px">✓</span>':''}
+      </div>
+    </div>
+
+    ${!insp.noDamage?`
+    <!-- Vehicle Damage Map -->
+    <div style="font-size:12px;font-weight:700;margin-bottom:8px">Tap a zone to record damage:</div>
+    <div style="position:relative;background:#f8fafc;border:1px solid var(--line2);border-radius:var(--r2);margin-bottom:12px;overflow:hidden">
+      <svg viewBox="0 0 100 100" style="width:100%;max-height:260px">
+        <!-- Car outline top-view -->
+        <rect x="35" y="8" width="30" height="84" rx="8" fill="#e2e8f0" stroke="#94a3b8" stroke-width="0.8"/>
+        <rect x="37" y="16" width="26" height="20" rx="3" fill="#bfdbfe" opacity="0.7"/>
+        <rect x="37" y="64" width="26" height="14" rx="3" fill="#bfdbfe" opacity="0.7"/>
+        <rect x="20" y="28" width="14" height="28" rx="3" fill="#cbd5e1" stroke="#94a3b8" stroke-width="0.5"/>
+        <rect x="66" y="28" width="14" height="28" rx="3" fill="#cbd5e1" stroke="#94a3b8" stroke-width="0.5"/>
+        <circle cx="22" cy="30" r="4" fill="#475569"/>
+        <circle cx="78" cy="30" r="4" fill="#475569"/>
+        <circle cx="22" cy="70" r="4" fill="#475569"/>
+        <circle cx="78" cy="70" r="4" fill="#475569"/>
+        <!-- Zone tap areas -->
+        ${zones.map(z=>`<circle cx="${z.x}" cy="${z.y}" r="7" fill="transparent" stroke="transparent" stroke-width="2" style="cursor:pointer" onclick="openDmgPicker('${z.id}','${z.label.replace(/'/g,'')}')" title="${z.label}"/>`).join('')}
+        <!-- Damage dots -->
+        ${dotsSVG}
+        <!-- Legend -->
+        <circle cx="6" cy="93" r="2.5" fill="#f59e0b"/><text x="10" y="95" font-size="3.5" fill="#64748b">Scratch</text>
+        <circle cx="32" cy="93" r="2.5" fill="#ef4444"/><text x="36" y="95" font-size="3.5" fill="#64748b">Dent</text>
+        <circle cx="52" cy="93" r="2.5" fill="#8b5cf6"/><text x="56" y="95" font-size="3.5" fill="#64748b">Crack</text>
+        <circle cx="72" cy="93" r="2.5" fill="#3b82f6"/><text x="76" y="95" font-size="3.5" fill="#64748b">Paint</text>
+      </svg>
+    </div>
+    <!-- Quick zone buttons -->
+    <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:14px">
+      ${zones.slice(0,8).map(z=>`<button onclick="openDmgPicker('${z.id}','${z.label.replace(/'/g,'')}')" style="font-size:10px;padding:4px 8px;background:var(--bg);border:1px solid var(--line2);border-radius:20px;cursor:pointer">${z.emoji} ${z.label}</button>`).join('')}
+      <button onclick="openZonePicker()" style="font-size:10px;padding:4px 8px;background:var(--blue);color:#fff;border:none;border-radius:20px;cursor:pointer">+ More zones</button>
+    </div>
+    <!-- Recorded damage list -->
+    <div style="font-size:12px;font-weight:700;margin-bottom:6px">Recorded Damage (${dp.length}):</div>
+    ${dpHtml}
+    `:''}
+
+    <!-- Photos -->
+    <div style="font-size:12px;font-weight:700;margin:14px 0 8px">📷 Inspection Photos (${insp.photos.length})</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+      ${photoHtml}
+      ${['Front','Rear','Left','Right','Damage'].map(t=>`
+        <label style="width:70px;height:70px;border:2px dashed var(--line2);border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;font-size:9px;color:var(--ink3);text-align:center">
+          <span style="font-size:18px">📷</span>${t}
+          <input type="file" accept="image/*" capture="environment" style="display:none" onchange="addInspPhoto(this,'${t.toLowerCase()}')">
+        </label>`).join('')}
+    </div>
+
+    <!-- Notes -->
+    <div class="fg mb3">
+      <label>Inspection Notes (optional)</label>
+      <textarea rows="2" placeholder="Any additional observations..." style="font-size:12px" oninput="S.W._insp.notes=this.value">${insp.notes}</textarea>
+    </div>
+
+    <!-- Customer Acknowledgement -->
+    <div style="border:1px solid var(--line2);border-radius:var(--r2);padding:12px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:800;margin-bottom:8px">👤 Customer Acknowledgement</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <input type="checkbox" id="cust-ack-cb" ${insp.custAck?'checked':''} onchange="S.W._insp.custAck=this.checked" style="width:16px;height:16px;accent-color:var(--green)">
+        <label for="cust-ack-cb" style="font-size:12px">Customer acknowledges the pre-wash vehicle condition</label>
+      </div>
+      <input type="text" placeholder="Customer name (if different)" value="${insp.custName}" oninput="S.W._insp.custName=this.value" style="font-size:12px">
+    </div>
+
+    <div class="row jb mt3">
+      <button class="btn bs" onclick="wizGo(1)">← Back</button>
+      <button class="btn bp blg" onclick="confirmInspection()">
+        ${insp.noDamage?'✅ No Damage — Continue →':'🔍 Confirm Inspection & Continue →'}
+      </button>
+    </div>`;
+}
+
+function openDmgPicker(zoneId, zoneLabel){
+  const types=['Scratch','Dent','Crack','Paint Damage','Broken','Other'];
+  openModal(`<div style="padding:4px"><div style="font-size:14px;font-weight:800;margin-bottom:14px">Damage at: ${zoneLabel}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+    ${types.map(t=>`<button onclick="addDmg('${zoneId}','${t}');closeModal()" class="btn bs" style="justify-content:flex-start;gap:8px">
+      <span>${t==='Scratch'?'〰':t==='Dent'?'💢':t==='Crack'?'⚡':t==='Paint Damage'?'🎨':t==='Broken'?'💥':'•'}</span>${t}
+    </button>`).join('')}
+    </div>
+    <button onclick="closeModal()" class="btn bs mt3" style="width:100%">Cancel</button>
+  </div>`);
+}
+
+function openZonePicker(){
+  const zones=[{id:'fl-door',label:'Front Left Door'},{id:'fr-door',label:'Front Right Door'},{id:'rl-door',label:'Rear Left Door'},{id:'rr-door',label:'Rear Right Door'},{id:'wshield',label:'Windshield'},{id:'rwshield',label:'Rear Windshield'},{id:'fl-wheel',label:'Front Left Wheel'},{id:'fr-wheel',label:'Front Right Wheel'},{id:'rl-wheel',label:'Rear Left Wheel'},{id:'rr-wheel',label:'Rear Right Wheel'},{id:'mirror-l',label:'Left Mirror'},{id:'mirror-r',label:'Right Mirror'},{id:'bumper-f',label:'Front Bumper'},{id:'bumper-r',label:'Rear Bumper'},{id:'roof',label:'Roof'},{id:'hood',label:'Hood'},{id:'trunk',label:'Trunk'}];
+  openModal(`<div style="font-size:14px;font-weight:800;margin-bottom:12px">Select Zone</div>
+    <div style="display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow-y:auto">
+    ${zones.map(z=>`<button onclick="openDmgPicker('${z.id}','${z.label}');closeModal()" class="btn bs" style="justify-content:flex-start">${z.label}</button>`).join('')}
+    </div>`);
+}
+
+function addDmg(zoneId,type){
+  if(!S.W._insp) S.W._insp={damagePoints:[],photos:[],noDamage:false,notes:'',custAck:false,custName:'',saved:false};
+  S.W._insp.damagePoints.push({zone:zoneId,type,time:new Date().toISOString()});
+  S.W._insp.noDamage=false;
+  renderInspection();
+  toast(type+' recorded ✓','ok');
+}
+
+async function addInspPhoto(input,type){
+  const file=input.files[0]; if(!file) return;
+  // Compress image before storing
+  const canvas=document.createElement('canvas');
+  const img=new Image();
+  const url=URL.createObjectURL(file);
+  img.onload=()=>{
+    const maxW=1280,maxH=960;
+    let w=img.width,h=img.height;
+    if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
+    if(h>maxH){w=Math.round(w*maxH/h);h=maxH;}
+    canvas.width=w;canvas.height=h;
+    canvas.getContext('2d').drawImage(img,0,0,w,h);
+    canvas.toBlob(blob=>{
+      const preview=canvas.toDataURL('image/jpeg',0.8);
+      S.W._insp.photos.push({type,file:blob,preview,name:`${type}-${Date.now()}.jpg`,uploaded:false});
+      renderInspection();
+      URL.revokeObjectURL(url);
+    },'image/jpeg',0.8);
+  };
+  img.src=url;
+}
+
+async function confirmInspection(){
+  const insp=S.W._insp;
+  if(!insp) return;
+
+  // Prevent double-confirm
+  if(insp._confirming){toast('Saving…','w');return;}
+  insp._confirming=true;
+
+  const plate=S.W.plate;
+  const inspector=S.user?.name||'Staff';
+  const now=new Date().toISOString();
+  const inspNo='INS-'+String(Date.now()).slice(-6);
+
+  try {
+    toast('Saving inspection…','i');
+
+    // 1. Save inspection to DB
+    const inspData={
+      inspection_no: inspNo,
+      customer_id: isUUID(S.W.custId)?S.W.custId:null,
+      plate,
+      vehicle_model: S.W.vname||'',
+      inspector_name: inspector,
+      no_damage: insp.noDamage,
+      damage_points: JSON.stringify(insp.damagePoints),
+      notes: insp.notes,
+      customer_acknowledged: insp.custAck,
+      customer_name: insp.custName||S.W.cust?.name||''
+    };
+    const {data:inspRow,error:iErr}=await sbQ('vehicle_inspections').insert(inspData).select().single();
+    if(iErr) throw iErr;
+
+    S.W._inspId=inspRow.id;
+    S.W._inspNo=inspNo;
+    insp.saved=true;
+
+    // 2. Upload photos
+    for(const photo of insp.photos){
+      if(!photo.file||photo.uploaded) continue;
+      try {
+        const path=`${inspRow.id}/${photo.name}`;
+        const {data:up}=await window.supabase.storage.from('inspection-photos').upload(path,photo.file,{contentType:'image/jpeg',upsert:true});
+        if(up){
+          const {data:{publicUrl}}=window.supabase.storage.from('inspection-photos').getPublicUrl(path);
+          await sbQ('inspection_photos').insert({inspection_id:inspRow.id,photo_type:photo.type,storage_path:path,public_url:publicUrl,file_size:photo.file.size});
+          photo.uploaded=true; photo.url=publicUrl;
+        }
+      }catch(pe){console.warn('[Photo] Upload failed:',pe?.message);}
+    }
+
+    // 3. Send WhatsApp notification automatically (don't block workflow)
+    setTimeout(()=>sendInspectionWhatsApp(inspRow,insp,plate),500);
+
+    toast('Inspection saved ✓','ok');
+    wizGo(3); // Go to services
+
+  } catch(e){
+    insp._confirming=false;
+    toast('Inspection save failed: '+(e.message||'DB error'),'e');
+    console.error('[Inspection]',e);
+  }
+}
+
+async function sendInspectionWhatsApp(inspRow,insp,plate){
+  const phone=S.W.cust?.phone;
+  if(!phone){console.log('[WA] No customer phone for inspection');return;}
+  if(!CFG.sms?.enabled){console.log('[WA] WhatsApp disabled');return;}
+
+  // Idempotency check — never send twice for same inspection
+  const idKey='insp_'+inspRow.id;
+  const {data:existing}=await sbQ('whatsapp_logs').select('id').eq('idempotency_key',idKey).single().catch(()=>({data:null}));
+  if(existing){console.log('[WA] Inspection WA already sent — skipping duplicate');return;}
+
+  // Build message
+  const damages=insp.damagePoints;
+  const dmgList=damages.map(d=>{
+    const zoneLabels={front:'Front',rear:'Rear',left:'Left Side',right:'Right Side','fl-door':'Front Left Door','fr-door':'Front Right Door','rl-door':'Rear Left Door','rr-door':'Rear Right Door',wshield:'Windshield',rwshield:'Rear Windshield','fl-wheel':'Front Left Wheel','fr-wheel':'Front Right Wheel','rl-wheel':'Rear Left Wheel','rr-wheel':'Rear Right Wheel','mirror-l':'Left Mirror','mirror-r':'Right Mirror','bumper-f':'Front Bumper','bumper-r':'Rear Bumper',roof:'Roof',hood:'Hood',trunk:'Trunk'};
+    return`• ${d.type} — ${zoneLabels[d.zone]||d.zone}`;
+  }).join('\n');
+
+  const msg=insp.noDamage?
+    `*NASH CARWASH*\n\nPre-wash inspection for *${plate}* has been completed.\n\nNo visible damage was recorded during the pre-wash inspection.\n\nYour vehicle has now been accepted for service.\n\n📞 +91 96569 15557 | +91 81119 15557\n\nThank you for choosing NASH CARWASH.`
+    :
+    `*NASH CARWASH*\n\nPre-wash vehicle inspection completed for *${plate}*.\n\nExisting visible condition recorded:\n${dmgList}\n\n🕐 Inspection Time: ${new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}\n\nYour vehicle has now been accepted for service.\n\n📞 +91 96569 15557 | +91 81119 15557\n\nThank you for choosing NASH CARWASH.`;
+
+  // Log attempt first
+  let logId=null;
+  try {
+    const fp=phone.replace(/[^0-9]/g,'');
+    const phoneFormatted=fp.length===10?'91'+fp:fp;
+    const {data:logRow}=await sbQ('whatsapp_logs').insert({
+      inspection_id:inspRow.id,
+      customer_id:isUUID(S.W.custId)?S.W.custId:null,
+      customer_phone:phoneFormatted,
+      plate,message_type:'inspection',
+      status:'pending',
+      idempotency_key:idKey,
+      sent_at:new Date().toISOString()
+    }).select().single();
+    if(logRow) logId=logRow.id;
+  }catch(le){console.warn('[WA] Log insert:',le?.message);}
+
+  // Send via Twilio
+  try {
+    if(CFG.sms.twilioSid&&CFG.sms.twilioToken){
+      const fp=phone.replace(/[^0-9]/g,'');
+      const to='whatsapp:+'+(fp.length===10?'91'+fp:fp);
+      const from=CFG.sms.twilioFrom||'whatsapp:+14155238886';
+      const creds=btoa(CFG.sms.twilioSid+':'+CFG.sms.twilioToken);
+      const body=new URLSearchParams({From:from,To:to,Body:msg});
+      const resp=await fetch('https://api.twilio.com/2010-04-01/Accounts/'+CFG.sms.twilioSid+'/Messages.json',
+        {method:'POST',headers:{'Authorization':'Basic '+creds,'Content-Type':'application/x-www-form-urlencoded'},body});
+      const result=await resp.json();
+      if(resp.ok&&result.sid){
+        if(logId) await sbQ('whatsapp_logs').update({status:'sent',twilio_sid:result.sid}).eq('id',logId);
+        toast('💬 Inspection WhatsApp sent to customer','ok');
+      } else {
+        throw new Error(result.message||'Twilio error');
+      }
+    } else {
+      // Fallback: open WhatsApp
+      const fp=phone.replace(/[^0-9]/g,'');
+      window.open('https://wa.me/'+(fp.length===10?'91'+fp:fp)+'?text='+encodeURIComponent(msg),'_blank');
+      if(logId) await sbQ('whatsapp_logs').update({status:'opened'}).eq('id',logId);
+    }
+  } catch(e){
+    console.error('[WA] Inspection send failed:',e.message);
+    if(logId) await sbQ('whatsapp_logs').update({status:'failed',error_details:e.message}).eq('id',logId);
+    toast('⚠ WhatsApp notification failed — '+e.message,'w');
+    // Don't block workflow — inspection is already saved
+  }
+}
+
+// ── STEP 4 / 5 markers ───────────────────────────────────────
+
 function onPlate(){
   const plate=el('wiz-plate')?.value.toUpperCase().trim();S.W.plate=plate;
   el('qa-wrap').style.display='none';
@@ -2409,6 +2743,7 @@ function buildLogCard(l){
       <div class="sf-bar">${LOG_STATUSES.map((s,i)=>`<div class="sf-i ${i<si?'done':i===si?'on':''}"><div class="sf-d">${i<si?'✓':i+1}</div><div class="sf-l">${LOG_LABELS[s]}</div></div>`).join('')}</div>
       ${['washing','interior','detailing'].includes(l.status)?`<span class="timer-live" id="slti-${l.id}">⏱ 00:00</span>`:''}
       ${l.ptsEarned>0?`<div style="font-size:10px;color:var(--purple);margin-top:5px;font-weight:700">💜 +${l.ptsEarned} loyalty points earned</div>`:''}
+      ${l._inspId?`<div style="font-size:10px;color:var(--green);margin-top:4px;font-weight:700;cursor:pointer" onclick="viewInspection('${l._inspId}')">🔍 Pre-Wash Inspection Completed — ${l._inspNo||''}</div>`:''}
       ${l.editHistory&&l.editHistory.length?`<div style="font-size:9px;color:var(--ink3);margin-top:4px">✏ Last edited by ${l.editHistory[l.editHistory.length-1].by} at ${ftm(l.editHistory[l.editHistory.length-1].at)}</div>`:''}
     </div>
     <div class="log-ft">${buildLogActions(l,isEditable)}</div>
@@ -3020,6 +3355,47 @@ async function installPWA(){
         <button class="btn bp bsm" onclick="closeModal()">Got it</button>
       </div>`);
   }
+}
+
+async function viewInspection(inspId){
+  const {data:insp,error}=await sbQ('vehicle_inspections').select('*').eq('id',inspId).single();
+  if(error||!insp){toast('Inspection not found','e');return;}
+  const {data:photos}=await sbQ('inspection_photos').select('*').eq('inspection_id',inspId);
+  const dp=typeof insp.damage_points==='string'?JSON.parse(insp.damage_points||'[]'):insp.damage_points||[];
+  const zoneLabels={'fl-door':'Front Left Door','fr-door':'Front Right Door','rl-door':'Rear Left Door','rr-door':'Rear Right Door',wshield:'Windshield',rwshield:'Rear Windshield','fl-wheel':'Front Left Wheel','fr-wheel':'Front Right Wheel','rl-wheel':'Rear Left Wheel','rr-wheel':'Rear Right Wheel','mirror-l':'Left Mirror','mirror-r':'Right Mirror','bumper-f':'Front Bumper','bumper-r':'Rear Bumper',roof:'Roof',hood:'Hood',trunk:'Trunk',front:'Front',rear:'Rear',left:'Left Side',right:'Right Side'};
+  openModal(`${mhd('🔍 Inspection Report — '+insp.inspection_no)}
+    <div style="font-size:12px;line-height:1.8">
+      <div class="g2 mb3" style="gap:8px">
+        <div><div style="font-size:10px;color:var(--ink3)">Plate</div><div style="font-weight:800">${insp.plate}</div></div>
+        <div><div style="font-size:10px;color:var(--ink3)">Inspector</div><div style="font-weight:700">${insp.inspector_name}</div></div>
+        <div><div style="font-size:10px;color:var(--ink3)">Date/Time</div><div>${fdt(insp.created_at)} ${ftm(insp.created_at)}</div></div>
+        <div><div style="font-size:10px;color:var(--ink3)">Customer Ack</div><div>${insp.customer_acknowledged?'✅ Acknowledged':'—'}</div></div>
+      </div>
+      <div style="border-top:1px solid var(--line2);padding-top:10px;margin-bottom:10px">
+        <div style="font-weight:800;margin-bottom:6px">${insp.no_damage?'✅ No Visible Damage Recorded':'Damage Recorded:'}</div>
+        ${dp.length?dp.map(d=>`<div style="background:var(--bg);border-radius:var(--r);padding:5px 10px;margin-bottom:4px">• ${d.type} — ${zoneLabels[d.zone]||d.zone}</div>`).join(''):''}
+        ${insp.notes?`<div style="margin-top:8px;color:var(--ink2)">Notes: ${insp.notes}</div>`:''}
+      </div>
+      ${photos&&photos.length?`<div style="font-weight:800;margin-bottom:8px">Photos (${photos.length}):</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+        ${photos.map(p=>`<img src="${p.public_url}" style="width:80px;height:80px;object-fit:cover;border-radius:6px;cursor:pointer" onclick="window.open('${p.public_url}')"><br>`).join('')}
+      </div>`:''}
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn bs" onclick="closeModal()">Close</button>
+      <button class="btn bs bsm" onclick="window.print()">🖨 Print</button>
+      <button class="btn bp bsm" onclick="resendInspectionWA('${inspId}')">💬 Resend WA</button>
+    </div>`);
+}
+
+async function resendInspectionWA(inspId){
+  const {data:insp}=await sbQ('vehicle_inspections').select('*').eq('id',inspId).single();
+  if(!insp){toast('Not found','e');return;}
+  const {data:waLog}=await sbQ('whatsapp_logs').select('*').eq('inspection_id',inspId).single().catch(()=>({data:null}));
+  const phone=S.customers.find(c=>c.id===insp.customer_id)?.phone||waLog?.customer_phone;
+  if(!phone){toast('No phone number','e');return;}
+  const dp=typeof insp.damage_points==='string'?JSON.parse(insp.damage_points||'[]'):[];
+  await sendInspectionWhatsApp(insp,{damagePoints:dp,noDamage:insp.no_damage,notes:insp.notes},insp.plate);
 }
 
 // ── Edit history logger ──
@@ -6120,6 +6496,13 @@ window.completeEntry = async function() {
     localEntry._dbId  = logRow.id;
     localEntry.jobNumber = logRow.job_number || jobNum;
     localEntry.invoiceNo = logRow.invoice_no || invNum;
+
+    // Link inspection to service log if inspection was done
+    if(S.W._inspId && isUUID(S.W._inspId)){
+      sbQ('vehicle_inspections').update({service_log_id:logRow.id}).eq('id',S.W._inspId).then(()=>{}).catch(()=>{});
+      localEntry._inspId=S.W._inspId;
+      localEntry._inspNo=S.W._inspNo;
+    }
 
     // Insert service line items
     if(svcDetails.length){
