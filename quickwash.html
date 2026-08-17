@@ -2805,26 +2805,20 @@ function sendWhatsApp(logId,auto=false){
   // Build WhatsApp message
   const waMsg = `*${CFG.bizName}* - Invoice Receipt
 
-` +
-    `Hi ${cust.name}! 🚗
-` +
-    `Your vehicle *${l.plate}* wash is complete.
+Hi ${cust.name}! 🚗
+Your vehicle *${l.plate}* wash is complete.
 
-` +
-    `📋 *Invoice: ${rcptNum}*
-` +
-    `📅 Date: ${fdt(l.enteredAt)}
-` +
-    `🔧 Services: ${svcNames.join(', ')||'—'}
-` +
-    `💰 Total: *${frs(total)}*
-` +
-    `💳 Payment: ${payLine||'Cash'} ✅
-` +
-    (loyMsg?`
-💜 ${loyMsg}
-`:'') +
-    `
+📋 *Invoice: ${rcptNum}*
+📅 Date: ${fdt(l.enteredAt)}
+🔧 Services: ${svcNames.join(', ')||'—'}
+💰 Total: *${frs(total)}*
+💳 Payment: ${payLine||'Cash'} ✅
+${loyMsg?'\n💜 '+loyMsg:''}
+
+📞 *Nash Car Wash*
+🔹 +91 96569 15557
+🔹 +91 81119 15557
+
 Thank you for choosing ${CFG.bizName}! 🙏`;
 
   if(!auto){
