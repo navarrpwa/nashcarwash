@@ -2523,7 +2523,7 @@ function openSlEdit(id){
     </div>
     ${histHTML}
     <div style="display:flex;gap:8px;justify-content:space-between;align-items:center">
-      <button class="btn br2 bsm" onclick="if(confirm('Cancel this job?')){closeModal();slDel(${id});}">🗑 Cancel Job</button>
+      <button class="btn br2 bsm" onclick="if(confirm('Cancel this job?')){closeModal();slDel('${id}');}">🗑 Cancel Job</button>
       <div style="display:flex;gap:8px">
         <button class="btn bs" onclick="closeModal()">Close</button>
         <button class="btn bp" onclick="saveSlEdit('${id}')">💾 Save Changes</button>
@@ -3039,7 +3039,16 @@ function slStaff(id){
   openModal(`${mhd('Assign Staff')}<div style="display:flex;flex-direction:column;gap:8px">${S.staff.map(s=>`<div onclick="doAssign(${id},'${s.name}')" style="padding:11px;border:1.5px solid var(--line2);border-radius:var(--r2);cursor:pointer;font-size:13px;font-weight:600">${s.name} <span style="color:var(--ink3);font-size:11px">${s.role}</span></div>`).join('')}</div>`);
 }
 function doAssign(id,name){const l=S.sl.find(x=>x.id===id);if(l){l.staff=name;logEdit(l,'Staff assigned: '+name);toast('Assigned: '+name,'ok');closeModal();renderSL();}}
-function slDel(id){clearInterval(S.slTimers[id]);delete S.slTimers[id];S.sl=S.sl.filter(x=>x.id!==id);toast('Deleted','ok');renderSL();}
+async function slDel(id){
+  const log=S.sl.find(x=>x.id===id||String(x.id)===String(id));
+  clearInterval(S.slTimers?.[id]);
+  if(S.slTimers) delete S.slTimers[id];
+  S.sl=S.sl.filter(x=>x.id!==id&&String(x.id)!==String(id));
+  toast('Job cancelled','ok');renderSL();rdash();
+  // Cancel in DB
+  const dbId=log&&isUUID(log.id)?log.id:(log&&isUUID(log._dbId)?log._dbId:null);
+  if(dbId) sbQ('service_logs').update({status:'cancelled',updated_at:new Date().toISOString()}).eq('id',dbId).then(()=>{}).catch(()=>{});
+}
 
 // ── Old slPaid replaced (keep as no-op stub) ──
 function slPaid(id){openSlPayment(id);}
@@ -6082,6 +6091,15 @@ window.completeEntry = async function() {
     };
 
     // Insert into Supabase directly
+    // Guard against double-tap / double submit
+    if(window._lastEntryTime && Date.now()-window._lastEntryTime < 4000){
+      console.warn('[QuickWash] Duplicate entry blocked — too fast');
+      window._submitting=false;
+      document.querySelectorAll('[onclick*="completeEntry"]').forEach(b=>b.disabled=false);
+      return;
+    }
+    window._lastEntryTime = Date.now();
+
     const ts=String(Date.now()).slice(-6);
     const jobNum = 'JOB-' + ts;
     const invNum = 'INV-' + ts;
@@ -6174,28 +6192,32 @@ window.completeEntry = async function() {
 
 // ── OVERRIDE: Service Log status advance ──────────────────────
 const _origSlAdv = window.slAdv;
-window.slAdv = async function(id) {
+window.slAdv = async function(id, statusOverride) {
   const LOG_ORDER = ['waiting','received','washing','interior','detailing','qc','ready','delivered'];
-  const log = S.sl.find(l => l.id === id);
+  const log = S.sl.find(l => l.id === id || String(l.id)===String(id));
   if (!log) return;
-  const next = LOG_ORDER[LOG_ORDER.indexOf(log.status) + 1];
+  const next = statusOverride || LOG_ORDER[LOG_ORDER.indexOf(log.status) + 1];
   if (!next) return;
   if (next === 'delivered' && !log.paid) {
-    toast('💳 Please record payment before delivery', 'e'); return;
+    toast('💳 Please record payment before delivery','e'); return;
   }
 
-  try {
-    QB.loading('Updating…');
-    await QB.advanceLogStatus(id, next);
-    // Optimistic update
-    log.status = next;
-    log[next + 'At'] = new Date().toISOString();
-    QB.doneLoading();
-    renderSL();
-    rdash();
-  } catch(err) {
-    QB.doneLoading();
-    QB.error(err, 'Status update failed');
+  // Update local state immediately
+  log.status = next;
+  const tfMap={received:'receivedAt',washing:'washingAt',interior:'interiorAt',
+    detailing:'detailingAt',qc:'qcAt',ready:'readyAt',delivered:'deliveredAt'};
+  if(tfMap[next] && !log[tfMap[next]]) log[tfMap[next]]=new Date().toISOString();
+  renderSL(); rdash();
+  toast('Status → '+next.toUpperCase()+' ✓','ok');
+
+  // Save to DB
+  const dbId = isUUID(log.id)?log.id:(isUUID(log._dbId)?log._dbId:null);
+  if(dbId){
+    const upd = { status:next, updated_at:new Date().toISOString() };
+    if(tfMap[next]) upd[tfMap[next].replace(/([A-Z])/g,m=>'_'+m.toLowerCase())] = log[tfMap[next]];
+    sbQ('service_logs').update(upd).eq('id',dbId)
+      .then(({error})=>{ if(error) console.warn('[DB] slAdv:',error.message); })
+      .catch(e=>console.warn('[DB] slAdv:',e?.message));
   }
 };
 
