@@ -2197,7 +2197,11 @@ async function sendInspectionWhatsApp(inspRow,insp,plate){
 
   // Idempotency check — never send twice for same inspection
   const idKey='insp_'+inspRow.id;
-  const {data:existing}=await sbQ('whatsapp_logs').select('id').eq('idempotency_key',idKey).single().catch(()=>({data:null}));
+  let existing=null;
+  try {
+    const {data}=await sbQ('whatsapp_logs').select('id').eq('idempotency_key',idKey).single();
+    existing=data;
+  } catch(e){}
   if(existing){console.log('[WA] Inspection WA already sent — skipping duplicate');return;}
 
   // Build message
