@@ -1677,6 +1677,8 @@ const CFG={
     twilioToken:'',    // Twilio Auth Token
     twilioFrom:'whatsapp:+14155238886', // Twilio sandbox number
     receiptTemplateSid:'HX06ee1b0a4a9d807dc7ad7516d957cfe4', // Approved receipt template SID
+    inspCleanTemplateSid:'HXadd39399df7fc0621c97330e75f286a5', // No damage inspection template
+    inspDamageTemplateSid:'HXa6e3e6a423685b602bb5f793558cb4e9', // Damage found inspection template
     apiKey:'',
     senderId:'QWASH',
     autoSendOnComplete:true,
@@ -2234,22 +2236,49 @@ async function sendInspectionWhatsApp(inspRow,insp,plate){
     if(logRow) logId=logRow.id;
   }catch(le){console.warn('[WA] Log insert:',le?.message);}
 
-  // Send via Twilio
+  // Send via Twilio using approved templates
   try {
     if(CFG.sms.twilioSid&&CFG.sms.twilioToken){
       const fp=phone.replace(/[^0-9]/g,'');
       const to='whatsapp:+'+(fp.length===10?'91'+fp:fp);
       const from=CFG.sms.twilioFrom||'whatsapp:+14155238886';
       const creds=btoa(CFG.sms.twilioSid+':'+CFG.sms.twilioToken);
-      const body=new URLSearchParams({From:from,To:to,Body:msg});
+      const isSandbox=from.includes('14155238886');
+      const zL={'fl-door':'Front Left Door','fr-door':'Front Right Door','rl-door':'Rear Left Door','rr-door':'Rear Right Door',wshield:'Windshield',rwshield:'Rear Windshield','fl-wheel':'Front Left Wheel','fr-wheel':'Front Right Wheel','rl-wheel':'Rear Left Wheel','rr-wheel':'Rear Right Wheel','mirror-l':'Left Mirror','mirror-r':'Right Mirror','bumper-f':'Front Bumper','bumper-r':'Rear Bumper',roof:'Roof',hood:'Hood',trunk:'Trunk',front:'Front',rear:'Rear',left:'Left Side',right:'Right Side'};
+
+      let params;
+      if(!isSandbox){
+        if(insp.noDamage){
+          // nash_inspection_clean: {{1}}=plate
+          params=new URLSearchParams({From:from,To:to,
+            ContentSid:CFG.sms.inspCleanTemplateSid||'HXadd39399df7fc0621c97330e75f286a5',
+            ContentVariables:JSON.stringify({'1':plate})
+          });
+        } else {
+          // nash_inspection_damage: {{1}}=plate {{2}}=damage list {{3}}=time
+          const dmgList=(insp.damagePoints||[]).map(d=>`• ${d.type} — ${zL[d.zone]||d.zone}`).join('\n');
+          params=new URLSearchParams({From:from,To:to,
+            ContentSid:CFG.sms.inspDamageTemplateSid||'HXa6e3e6a423685b602bb5f793558cb4e9',
+            ContentVariables:JSON.stringify({
+              '1':plate,
+              '2':dmgList||'No specific damage details',
+              '3':new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})
+            })
+          });
+        }
+      } else {
+        // Sandbox — freeform text
+        params=new URLSearchParams({From:from,To:to,Body:msg});
+      }
+
       const resp=await fetch('https://api.twilio.com/2010-04-01/Accounts/'+CFG.sms.twilioSid+'/Messages.json',
-        {method:'POST',headers:{'Authorization':'Basic '+creds,'Content-Type':'application/x-www-form-urlencoded'},body});
+        {method:'POST',headers:{'Authorization':'Basic '+creds,'Content-Type':'application/x-www-form-urlencoded'},body:params});
       const result=await resp.json();
       if(resp.ok&&result.sid){
         if(logId) await sbQ('whatsapp_logs').update({status:'sent',twilio_sid:result.sid}).eq('id',logId);
         toast('💬 Inspection WhatsApp sent to customer','ok');
       } else {
-        throw new Error(result.message||'Twilio error');
+        throw new Error(result.message||result.error_message||'Twilio error');
       }
     } else {
       // Fallback: open WhatsApp
@@ -3337,6 +3366,8 @@ async function saveWhatsAppSettings(){
       sbQ('app_config').upsert({key:'twilio_token',value:CFG.sms.twilioToken||''},{onConflict:'key'}),
       sbQ('app_config').upsert({key:'twilio_from', value:CFG.sms.twilioFrom||''}, {onConflict:'key'}),
       sbQ('app_config').upsert({key:'receipt_template_sid', value:CFG.sms.receiptTemplateSid||''},{onConflict:'key'}),
+      sbQ('app_config').upsert({key:'insp_clean_sid', value:CFG.sms.inspCleanTemplateSid||'HXadd39399df7fc0621c97330e75f286a5'},{onConflict:'key'}),
+      sbQ('app_config').upsert({key:'insp_damage_sid', value:CFG.sms.inspDamageTemplateSid||'HXa6e3e6a423685b602bb5f793558cb4e9'},{onConflict:'key'}),
       sbQ('app_config').upsert({key:'wa_enabled',  value:String(CFG.sms.enabled)},{onConflict:'key'}),
     ];
     await Promise.all(saves);
@@ -6218,6 +6249,8 @@ async function sbBootstrapApp() {
     if(cfg.twilio_token) CFG.sms.twilioToken = cfg.twilio_token;
     if(cfg.twilio_from)  CFG.sms.twilioFrom  = cfg.twilio_from;
     if(cfg.receipt_template_sid) CFG.sms.receiptTemplateSid = cfg.receipt_template_sid;
+    if(cfg.insp_clean_sid)  CFG.sms.inspCleanTemplateSid  = cfg.insp_clean_sid;
+    if(cfg.insp_damage_sid) CFG.sms.inspDamageTemplateSid = cfg.insp_damage_sid;
     if(cfg.wa_biz_name)  CFG.sms.senderId    = cfg.wa_biz_name;
     if(cfg.wa_enabled !== undefined) CFG.sms.enabled = cfg.wa_enabled !== 'false';
     if(cfg.anpr_provider) CFG.anprProvider = cfg.anpr_provider;
