@@ -6391,13 +6391,11 @@ async function sbBootstrapApp() {
       cctvScanInterval: parseInt(cfg.cctv_scan_interval) || CFG.cctvScanInterval,
     });
 
-    // Load WhatsApp settings from DB
-    // Load disabled vehicle categories
+    // Load disabled vehicle categories — stored before ALL_CATS rebuild
+    const _disabledCatsFromDB = cfg.disabled_cats ? JSON.parse(cfg.disabled_cats).catch?.(()=>[]) : null;
+    let _parsedDisabledCats = [];
     if(cfg.disabled_cats){
-      try {
-        CFG._disabledCats = JSON.parse(cfg.disabled_cats);
-        loadCatSettings();
-      } catch(e){}
+      try { _parsedDisabledCats = JSON.parse(cfg.disabled_cats); } catch(e){}
     }
     if(cfg.wa_token)     CFG.sms.waToken     = cfg.wa_token;
     if(cfg.wa_phone_id)  CFG.sms.waPhoneId   = cfg.wa_phone_id;
@@ -6435,13 +6433,19 @@ async function sbBootstrapApp() {
       });
     });
 
-    // Map ALL_CATS
+    // Map ALL_CATS from DB vtypes
     ALL_CATS.length = 0;
     vtypes.forEach(vt => {
       (vt.vehicle_categories || []).forEach(vc => {
-        ALL_CATS.push({ type: vt.code, typeLabel: vt.label, cat: vc.name, _dbId: vc.id });
+        ALL_CATS.push({ type: vt.code, typeLabel: vt.label, cat: vc.name, _dbId: vc.id, enabled: true });
       });
     });
+
+    // NOW apply disabled categories (after ALL_CATS is fully built)
+    if(_parsedDisabledCats.length){
+      CFG._disabledCats = _parsedDisabledCats;
+      loadCatSettings();
+    }
 
     // Map services
     S.washSvcs = services.map(svc => ({
