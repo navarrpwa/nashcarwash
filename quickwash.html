@@ -4800,7 +4800,7 @@ function renderAdm(){
     c.innerHTML=`<div class="row aic jb mb3"><div style="font-size:13px;font-weight:800">Service Pricing Matrix — All Categories</div><div class="row g8"><button class="btn bs bsm" onclick="bulkFromMultiplier()">↺ Reset to Multipliers</button><button class="btn bp bsm" onclick="savePricingMatrix()">💾 Save All</button></div></div>
     <div style="background:var(--alt);border-radius:var(--r);padding:9px 12px;margin-bottom:12px;font-size:11px;color:var(--amber)">⚠ <em>auto</em> = calculated from Base × multiplier. Set an explicit value to lock the price. Zero price will block checkout for that vehicle+service.</div>
     <div style="overflow-x:auto"><table class="price-matrix" style="width:100%;min-width:800px"><thead><tr><th>Type</th><th>Category</th>${S.washSvcs.map(s=>`<th style="min-width:100px;font-size:9px">${s.name}</th>`).join('')}</tr></thead><tbody>
-    ${ALL_CATS.map(row=>`<tr><td style="font-weight:700;white-space:nowrap;font-size:10px;color:var(--ink3)">${row.typeLabel}</td><td style="font-weight:700;font-size:12px">${row.cat}</td>${S.washSvcs.map(s=>{const hasEx=s.prices&&s.prices[row.cat]>0;const val=gPrice(s,row.cat);return`<td style="padding:4px 6px"><input type="number" id="pm-${s.id}-${row.cat.replace(/\s/g,'-')}" value="${val||''}" placeholder="—" min="0" style="width:88px;padding:4px 7px;font-size:12px;font-weight:700;text-align:right;border:1.5px solid ${hasEx?'var(--green)':'var(--line2)'}" oninput="pmChange(${s.id},'${row.cat}',this.value)"><div style="font-size:8px;color:${hasEx?'var(--green)':'var(--amber)'};font-weight:700;text-align:right;margin-top:1px">${hasEx?'custom':'auto'}</div></td>`;}).join('')}</tr>`).join('')}
+    ${ALL_CATS.map(row=>`<tr><td style="font-weight:700;white-space:nowrap;font-size:10px;color:var(--ink3)">${row.typeLabel}</td><td style="font-weight:700;font-size:12px">${row.cat}</td>${S.washSvcs.map(s=>{const hasEx=s.prices&&s.prices[row.cat]>0;const val=gPrice(s,row.cat);return`<td style="padding:4px 6px"><input type="number" id="pm-${s.id}-${row.cat.replace(/\s/g,'-')}" value="${val||''}" placeholder="—" min="0" style="width:88px;padding:4px 7px;font-size:12px;font-weight:700;text-align:right;border:1.5px solid ${hasEx?'var(--green)':'var(--line2)'}" oninput="pmChange('${s.id}','${row.cat}',this.value)"><div style="font-size:8px;color:${hasEx?'var(--green)':'var(--amber)'};font-weight:700;text-align:right;margin-top:1px">${hasEx?'custom':'auto'}</div></td>`;}).join('')}</tr>`).join('')}
     </tbody></table></div>`;
   } else if(section==='vehicle-types'){
     c.innerHTML=`<div class="sec mb3">Vehicle Types & Categories</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">${VEHICLE_TYPES.map(vt=>`<div class="card"><div style="font-size:22px;margin-bottom:6px">${vt.icon}</div><div style="font-size:13px;font-weight:800;margin-bottom:8px">${vt.label}</div><div style="display:flex;flex-wrap:wrap;gap:4px">${vt.cats.map(cat=>`<span class="bx bgr" style="font-size:10px">${cat}</span>`).join('')}</div></div>`).join('')}</div>`;
@@ -5267,7 +5267,7 @@ function delSvc(id){S.washSvcs=S.washSvcs.filter(s=>s.id!==id);toast('Deleted','
 // SERVICE PRICING MATRIX
 // ══════════════════════════════════════════════════════════
 function openPricingMatrix(svcId){
-  const s=S.washSvcs.find(x=>x.id===svcId);if(!s)return;
+  const s=S.washSvcs.find(x=>String(x.id)===String(svcId));if(!s)return;
   if(!s.prices)s.prices=mkPrices(s.basePrice);
   const rows=ALL_CATS.map(row=>{
     const hasEx=s.prices[row.cat]>0;
@@ -5284,8 +5284,8 @@ function openPricingMatrix(svcId){
       Set prices for each vehicle category. Leave blank or 0 to use auto-multiplier. <strong>Custom prices are highlighted in green.</strong>
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:12px">
-      <button class="btn bs bsm" onclick="fillAllFromMul(${svcId})">↺ Fill from multipliers</button>
-      <button class="btn bg2 bsm" onclick="clearAllPrices(${svcId})">Clear all custom</button>
+      <button class="btn bs bsm" onclick="fillAllFromMul('${svcId}')">↺ Fill from multipliers</button>
+      <button class="btn bg2 bsm" onclick="clearAllPrices('${svcId}')">Clear all custom</button>
     </div>
     <div style="max-height:55vh;overflow-y:auto">
     <table style="width:100%;border-collapse:collapse;font-size:12px">
@@ -5294,12 +5294,12 @@ function openPricingMatrix(svcId){
     </table></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
       <button class="btn bs" onclick="closeModal()">Cancel</button>
-      <button class="btn bp" onclick="saveSinglePricing(${svcId})">💾 Save Prices</button>
+      <button class="btn bp" onclick="saveSinglePricing('${svcId}')">💾 Save Prices</button>
     </div>`,640);
 }
 
 function saveSinglePricing(svcId){
-  const s=S.washSvcs.find(x=>x.id===svcId);if(!s)return;
+  const s=S.washSvcs.find(x=>String(x.id)===String(svcId));if(!s)return;
   if(!s.prices)s.prices={};
   ALL_CATS.forEach(row=>{
     const inp=el('mp-'+row.cat.replace(/\s/g,'-'));
@@ -5310,7 +5310,7 @@ function saveSinglePricing(svcId){
 }
 
 function fillAllFromMul(svcId){
-  const s=S.washSvcs.find(x=>x.id===svcId);if(!s)return;
+  const s=S.washSvcs.find(x=>String(x.id)===String(svcId));if(!s)return;
   ALL_CATS.forEach(row=>{
     const inp=el('mp-'+row.cat.replace(/\s/g,'-'));
     if(inp){inp.value=Math.round(s.basePrice*(CAT_MUL[row.cat]||1));inp.style.borderColor='var(--line2)';}
@@ -5319,7 +5319,7 @@ function fillAllFromMul(svcId){
 }
 
 function clearAllPrices(svcId){
-  const s=S.washSvcs.find(x=>x.id===svcId);if(!s)return;
+  const s=S.washSvcs.find(x=>String(x.id)===String(svcId));if(!s)return;
   s.prices={};
   ALL_CATS.forEach(row=>{
     const inp=el('mp-'+row.cat.replace(/\s/g,'-'));
@@ -5330,7 +5330,7 @@ function clearAllPrices(svcId){
 
 // Full matrix view functions
 function pmChange(svcId,cat,val){
-  const s=S.washSvcs.find(x=>x.id===svcId);if(!s)return;
+  const s=S.washSvcs.find(x=>String(x.id)===String(svcId));if(!s)return;
   if(!s.prices)s.prices={};
   s.prices[cat]=parseFloat(val)||0;
 }
