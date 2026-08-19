@@ -2530,22 +2530,15 @@ function renderVD(){
       cats:(vt.vehicle_categories||[]).map(vc=>vc.name)
     }));
   } else {
-    // Hardcoded fallback — always works even without DB
-    vtypes = [
-      {id:'2w',  label:'2 Wheeler',icon:'🛵', cats:['Scooter','Motorcycle']},
-      {id:'3w',  label:'3 Wheeler',icon:'🛺', cats:['Auto Rickshaw']},
-      {id:'4w',  label:'4 Wheeler',icon:'🚗', cats:['Sedan','Hatchback','SUV','Coupe','Pickup','Luxury']},
-      {id:'truck',label:'Truck',   icon:'🚛', cats:['Light Truck','Heavy Truck']},
-      {id:'bus', label:'Bus',      icon:'🚌', cats:['Standard Bus','Minibus']},
-      {id:'van', label:'Van',      icon:'🚐', cats:['Van','Minivan']},
-      {id:'other',label:'Other',   icon:'🚙', cats:['Other']}
-    ];
-    // Filter disabled categories from each type
-    vtypes = vtypes.map(vt=>({
-      ...vt,
-      cats: vt.cats.filter(c=>{const ac=ALL_CATS.find(a=>a.cat===c);return !ac||ac.enabled!==false;})
-    })).filter(vt=>vt.cats.length>0);
-    if(VEHICLE_TYPES.length===0) vtypes.forEach(v=>VEHICLE_TYPES.push(v));
+    // Build from ALL_CATS — always filtered live so disabled cats never appear
+    const typeMap={};
+    ALL_CATS.filter(c=>c.enabled!==false).forEach(c=>{
+      if(!typeMap[c.type]) typeMap[c.type]={id:c.type,label:c.typeLabel,icon:
+        c.type==='2w'?'🛵':c.type==='3w'?'🛺':c.type==='4w'?'🚗':
+        c.type==='truck'?'🚛':c.type==='bus'?'🚌':c.type==='van'?'🚐':'🚙',cats:[]};
+      typeMap[c.type].cats.push(c.cat);
+    });
+    vtypes=Object.values(typeMap);
   }
   el('vtype-grid').innerHTML=vtypes.map(t=>`<div class="vt-btn ${S.W.vtype===t.id?'sel':''}" onclick="selVT('${t.id}')"><div class="vt-icon">${t.icon||'🚗'}</div><div class="vt-lbl">${t.label}</div></div>`).join('');
   if(S.W.vtype)renderVCat();chk2();
@@ -2558,15 +2551,16 @@ function renderVCat(){
   let vtypes = VEHICLE_TYPES.length > 0 ? VEHICLE_TYPES :
     (S._vtypes||[]).map(vt=>({id:vt.code,label:vt.label,icon:vt.icon||'🚗',
       cats:(vt.vehicle_categories||[]).map(vc=>vc.name)}));
-  if(!vtypes.length) vtypes=[
-    {id:'2w',  label:'2 Wheeler',icon:'🛵',cats:['Scooter','Motorcycle']},
-    {id:'3w',  label:'3 Wheeler',icon:'🛺',cats:['Auto Rickshaw']},
-    {id:'4w',  label:'4 Wheeler',icon:'🚗',cats:['Sedan','Hatchback','SUV','Coupe','Pickup','Luxury']},
-    {id:'truck',label:'Truck',   icon:'🚛',cats:['Light Truck','Heavy Truck']},
-    {id:'bus', label:'Bus',      icon:'🚌',cats:['Standard Bus','Minibus']},
-    {id:'van', label:'Van',      icon:'🚐',cats:['Van','Minivan']},
-    {id:'other',label:'Other',   icon:'🚙',cats:['Other']}
-  ].map(vt=>({...vt,cats:vt.cats.filter(c=>{const ac=ALL_CATS.find(a=>a.cat===c);return !ac||ac.enabled!==false;})}));
+  if(!vtypes.length){
+    const typeMap={};
+    ALL_CATS.filter(c=>c.enabled!==false).forEach(c=>{
+      if(!typeMap[c.type]) typeMap[c.type]={id:c.type,label:c.typeLabel,icon:
+        c.type==='2w'?'🛵':c.type==='3w'?'🛺':c.type==='4w'?'🚗':
+        c.type==='truck'?'🚛':c.type==='bus'?'🚌':c.type==='van'?'🚐':'🚙',cats:[]};
+      typeMap[c.type].cats.push(c.cat);
+    });
+    vtypes=Object.values(typeMap);
+  }
   const vt=vtypes.find(t=>t.id===S.W.vtype);if(!vt)return;
   el('vcat-sec').style.display='block';
   el('vcat-grid').innerHTML=vt.cats
@@ -3580,14 +3574,15 @@ async function saveCatSettings(){
   }
 }
 function loadCatSettings(){
-  // Load disabled cats from config
-  const saved=CFG._disabledCats;
-  if(saved&&Array.isArray(saved)){
-    saved.forEach(catName=>{
-      const cat=ALL_CATS.find(c=>c.cat===catName);
-      if(cat) cat.enabled=false;
-    });
-  }
+  const saved = CFG._disabledCats;
+  if(!saved || !Array.isArray(saved)) return;
+  // Reset all to enabled first
+  ALL_CATS.forEach(c => c.enabled = true);
+  // Then disable saved ones
+  saved.forEach(catName => {
+    const cat = ALL_CATS.find(c => c.cat === catName);
+    if(cat) cat.enabled = false;
+  });
 }
 
 // ── Edit history logger ──
