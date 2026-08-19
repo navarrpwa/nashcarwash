@@ -2532,15 +2532,19 @@ function renderVD(){
   } else {
     // Hardcoded fallback — always works even without DB
     vtypes = [
-      {id:'2w',label:'2 Wheeler',icon:'🛵',cats:['Scooter','Motorcycle']},
-      {id:'3w',label:'3 Wheeler',icon:'🛺',cats:['Auto Rickshaw']},
-      {id:'4w',label:'4 Wheeler',icon:'🚗',cats:['Sedan','Hatchback','SUV','Coupe','Pickup','Luxury']},
-      {id:'truck',label:'Truck',icon:'🚛',cats:['Light Truck','Heavy Truck']},
-      {id:'bus',label:'Bus',icon:'🚌',cats:['Standard Bus','Minibus']},
-      {id:'van',label:'Van',icon:'🚐',cats:['Van','Minivan']},
-      {id:'other',label:'Other',icon:'🚙',cats:['Other']}
+      {id:'2w',  label:'2 Wheeler',icon:'🛵', cats:['Scooter','Motorcycle']},
+      {id:'3w',  label:'3 Wheeler',icon:'🛺', cats:['Auto Rickshaw']},
+      {id:'4w',  label:'4 Wheeler',icon:'🚗', cats:['Sedan','Hatchback','SUV','Coupe','Pickup','Luxury']},
+      {id:'truck',label:'Truck',   icon:'🚛', cats:['Light Truck','Heavy Truck']},
+      {id:'bus', label:'Bus',      icon:'🚌', cats:['Standard Bus','Minibus']},
+      {id:'van', label:'Van',      icon:'🚐', cats:['Van','Minivan']},
+      {id:'other',label:'Other',   icon:'🚙', cats:['Other']}
     ];
-    // Populate VEHICLE_TYPES array for rest of app
+    // Filter disabled categories from each type
+    vtypes = vtypes.map(vt=>({
+      ...vt,
+      cats: vt.cats.filter(c=>{const ac=ALL_CATS.find(a=>a.cat===c);return !ac||ac.enabled!==false;})
+    })).filter(vt=>vt.cats.length>0);
     if(VEHICLE_TYPES.length===0) vtypes.forEach(v=>VEHICLE_TYPES.push(v));
   }
   el('vtype-grid').innerHTML=vtypes.map(t=>`<div class="vt-btn ${S.W.vtype===t.id?'sel':''}" onclick="selVT('${t.id}')"><div class="vt-icon">${t.icon||'🚗'}</div><div class="vt-lbl">${t.label}</div></div>`).join('');
@@ -2555,17 +2559,19 @@ function renderVCat(){
     (S._vtypes||[]).map(vt=>({id:vt.code,label:vt.label,icon:vt.icon||'🚗',
       cats:(vt.vehicle_categories||[]).map(vc=>vc.name)}));
   if(!vtypes.length) vtypes=[
-    {id:'2w',label:'2 Wheeler',icon:'🛵',cats:['Scooter','Motorcycle']},
-    {id:'3w',label:'3 Wheeler',icon:'🛺',cats:['Auto Rickshaw']},
-    {id:'4w',label:'4 Wheeler',icon:'🚗',cats:['Sedan','Hatchback','SUV','Coupe','Pickup','Luxury']},
-    {id:'truck',label:'Truck',icon:'🚛',cats:['Light Truck','Heavy Truck']},
-    {id:'bus',label:'Bus',icon:'🚌',cats:['Standard Bus','Minibus']},
-    {id:'van',label:'Van',icon:'🚐',cats:['Van','Minivan']},
-    {id:'other',label:'Other',icon:'🚙',cats:['Other']}
-  ];
+    {id:'2w',  label:'2 Wheeler',icon:'🛵',cats:['Scooter','Motorcycle']},
+    {id:'3w',  label:'3 Wheeler',icon:'🛺',cats:['Auto Rickshaw']},
+    {id:'4w',  label:'4 Wheeler',icon:'🚗',cats:['Sedan','Hatchback','SUV','Coupe','Pickup','Luxury']},
+    {id:'truck',label:'Truck',   icon:'🚛',cats:['Light Truck','Heavy Truck']},
+    {id:'bus', label:'Bus',      icon:'🚌',cats:['Standard Bus','Minibus']},
+    {id:'van', label:'Van',      icon:'🚐',cats:['Van','Minivan']},
+    {id:'other',label:'Other',   icon:'🚙',cats:['Other']}
+  ].map(vt=>({...vt,cats:vt.cats.filter(c=>{const ac=ALL_CATS.find(a=>a.cat===c);return !ac||ac.enabled!==false;})}));
   const vt=vtypes.find(t=>t.id===S.W.vtype);if(!vt)return;
   el('vcat-sec').style.display='block';
-  el('vcat-grid').innerHTML=vt.cats.map(c=>`<div class="vc-btn ${S.W.vcat===c?'sel':''}" onclick="selVC('${c}')">${c}<br><span style="font-size:9px;color:var(--ink3)">×${CAT_MUL[c]||1}</span></div>`).join('');
+  el('vcat-grid').innerHTML=vt.cats
+    .filter(c=>{ const ac=ALL_CATS.find(a=>a.cat===c); return !ac||ac.enabled!==false; })
+    .map(c=>`<div class="vc-btn ${S.W.vcat===c?'sel':''}" onclick="selVC('${c}')">${c}<br><span style="font-size:9px;color:var(--ink3)">×${CAT_MUL[c]||1}</span></div>`).join('');
 }
 function selVC(cat){S.W.vcat=cat;document.querySelectorAll('.vc-btn').forEach(b=>b.classList.remove('sel'));event.currentTarget.classList.add('sel');chk2();}
 function chk2(){if(el('btn1'))el('btn1').disabled=!S.W.vtype||!S.W.vcat;}
