@@ -1818,7 +1818,15 @@ const CH={};
 function mkch(id,cfg){if(typeof Chart==='undefined')return;if(CH[id])try{CH[id].destroy();}catch(e){console.warn("[QuickWash] Non-critical error:",e?.message);}const cv=el(id);if(!cv)return;try{CH[id]=new Chart(cv,cfg);}catch(e){console.warn("[QuickWash] Non-critical error:",e?.message);}}
 function tDiff(a,b){const ms=new Date(b||Date.now())-new Date(a);const m=Math.floor(ms/60000),s=Math.floor((ms%60000)/1000);return`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;}
 function tabs(items,cur,fn){return items.map(t=>`<button class="btn ${t===cur?'bp':'bs'} bsm" onclick="${fn}('${t}')">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('');}
-function getTotalSvcPrice(){const cat=S.W.vcat||'Sedan';return S.W.svcs.reduce((a,x)=>{const s=S.washSvcs.find(v=>String(v.id)===String(x.id));return a+(s?gPrice(s,cat)*x.qty:0);},0);}
+function getTotalSvcPrice(){
+  const cat=S.W.vcat||'Sedan';
+  return S.W.svcs.reduce((a,x)=>{
+    const s=S.washSvcs.find(v=>String(v.id)===String(x.id));
+    // Use custom price if set (flexible service), otherwise standard price
+    const price=x.customPrice!=null?parseFloat(x.customPrice)||0:(s?gPrice(s,cat):0);
+    return a+price*x.qty;
+  },0);
+}
 
 // ══════════════════════════════════════════════════════════
 // AUTH
@@ -2570,11 +2578,35 @@ function renderSvcSel(){
   el('pkg-quick').innerHTML=pkgs.length?`<div style="font-size:11px;font-weight:700;color:var(--ink2);margin-bottom:7px">📦 Packages</div><div style="display:flex;gap:8px;flex-wrap:wrap">${pkgs.map(p=>`<button class="btn bsm" style="background:var(--plt);color:var(--purple);border:1.5px solid #DDD6FE" onclick="applyPkg('${p.id}')">${p.name} — ${frs(p.price)}</button>`).join('')}</div>`:'';
   // Services grid
   el('svc-sel-grid').innerHTML=S.washSvcs.map(s=>{
-    const price=gPrice(s,cat);const sel=S.W.svcs.find(x=>String(x.id)===String(s.id));
+    const price=gPrice(s,cat);
+    const sel=S.W.svcs.find(x=>String(x.id)===String(s.id));
+    const isFlexible=s.is_flexible||s.flexible||false;
+    const customPrice=sel?.customPrice;
+    const displayPrice=isFlexible&&sel&&customPrice!=null?customPrice:price;
     return`<div class="ss-card ${sel?'sel':''}" onclick="toggleSvc('${s.id}')">
-      <div class="ss-name">${s.name}</div><div class="ss-price">${frs(price)}</div>
+      <div class="ss-name">${s.name}</div>
+      <div class="ss-price" style="${isFlexible?'color:var(--amber)':''}">
+        ${isFlexible?'✏ Custom Price':''}${!isFlexible||!sel?frs(displayPrice):''}
+      </div>
       <div class="ss-cat">${s.cat||s.category||''} • ${s.dur||s.duration_min||30}min</div>
-      ${sel?`<div style="display:flex;align-items:center;gap:6px;margin-top:8px" onclick="event.stopPropagation()"><button class="qb" onclick="svcQ('${s.id}',-1)" style="width:24px;height:24px;border-radius:5px;border:1.5px solid var(--line2);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">−</button><span style="font-size:13px;font-weight:800">${sel.qty}</span><button class="qb" onclick="svcQ('${s.id}',1)" style="width:24px;height:24px;border-radius:5px;border:1.5px solid var(--line2);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button></div>`:''}
+      ${isFlexible?`<div style="font-size:9px;color:var(--amber);font-weight:700">Flexible Price</div>`:''}
+      ${sel?`
+        ${isFlexible?`<div onclick="event.stopPropagation()" style="margin-top:8px">
+          <div style="font-size:10px;color:var(--ink3);margin-bottom:3px">Enter price (₹)</div>
+          <input type="number" min="0" step="10"
+            value="${customPrice!=null?customPrice:price}"
+            placeholder="Enter amount"
+            style="width:100%;padding:7px 8px;border:2px solid var(--amber);border-radius:7px;font-size:15px;font-weight:800;color:var(--ink);text-align:center"
+            oninput="setSvcCustomPrice('${s.id}',this.value)"
+            onclick="event.stopPropagation()">
+        </div>`:''}
+        <div style="display:flex;align-items:center;gap:6px;margin-top:8px" onclick="event.stopPropagation()">
+          <button class="qb" onclick="svcQ('${s.id}',-1)" style="width:24px;height:24px;border-radius:5px;border:1.5px solid var(--line2);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">−</button>
+          <span style="font-size:13px;font-weight:800">${sel.qty}</span>
+          <button class="qb" onclick="svcQ('${s.id}',1)" style="width:24px;height:24px;border-radius:5px;border:1.5px solid var(--line2);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>
+          ${isFlexible&&sel?`<span style="font-size:12px;font-weight:800;color:var(--green);margin-left:4px">${frs((customPrice!=null?customPrice:price)*sel.qty)}</span>`:''}
+        </div>
+      `:''}
     </div>`;
   }).join('');
   // Offers strip
@@ -2596,7 +2628,22 @@ function renderSvcSel(){
   el('loyalty-strip').innerHTML=lc&&CFG.loyaltyEnabled?`<div style="background:var(--plt);border:1.5px solid #DDD6FE;border-radius:var(--r);padding:10px 12px"><div style="font-size:10px;font-weight:800;color:var(--purple);margin-bottom:4px">💜 Loyalty Points</div><div style="font-size:12px;color:var(--ink2)">${lc.name} has <strong style="color:var(--purple)">${lc.points} pts</strong> (${frs(lc.points*CFG.pointValue)} value)</div></div>`:'';
   updateSvcStrip();
 }
-function toggleSvc(id){const idx=S.W.svcs.findIndex(x=>String(x.id)===String(id));if(idx>=0)S.W.svcs.splice(idx,1);else S.W.svcs.push({id,qty:1});renderSvcSel();}
+function toggleSvc(id){
+  const idx=S.W.svcs.findIndex(x=>String(x.id)===String(id));
+  if(idx>=0){S.W.svcs.splice(idx,1);}
+  else {
+    const s=S.washSvcs.find(x=>String(x.id)===String(id));
+    const isFlexible=s?.is_flexible||s?.flexible||false;
+    // For flexible services, start with base price so input shows a value
+    S.W.svcs.push({id,qty:1,customPrice:isFlexible?gPrice(s,S.W.vcat||'Sedan'):null});
+  }
+  renderSvcSel();
+}
+function setSvcCustomPrice(id,val){
+  const s=S.W.svcs.find(x=>String(x.id)===String(id));
+  if(s) s.customPrice=parseFloat(val)||0;
+  updateSvcStrip(); // update total without full re-render (avoids losing focus)
+}
 function svcQ(id,d){const s=S.W.svcs.find(x=>String(x.id)===String(id));if(!s)return;s.qty+=d;if(s.qty<=0)S.W.svcs=S.W.svcs.filter(x=>String(x.id)!==String(id));renderSvcSel();}
 function applyPkg(pkgId){
   const pkg=S.packages.find(p=>p.id===pkgId);if(!pkg)return;
@@ -2609,6 +2656,11 @@ function applyOffer(offId){
   const o=S.offers.find(x=>x.id===offId);if(!o)return;S.W.appliedOffer=o;
   toast('Offer applied: '+o.name,'ok');renderSvcSel();
 }
+function getEffectivePrice(svcEntry,s,cat){
+  // If custom price is set (flexible service), use it
+  if(svcEntry&&svcEntry.customPrice!=null) return parseFloat(svcEntry.customPrice)||0;
+  return gPrice(s,cat);
+}
 function updateSvcStrip(){
   const tot=getTotalSvcPrice();
   if(el('sel-cnt'))el('sel-cnt').textContent=S.W.svcs.length;
@@ -2619,7 +2671,12 @@ function updateSvcStrip(){
 // Step 4 - Payment
 function renderPayStep(){
   const cat=S.W.vcat||'Sedan';
-  el('pay-sum').innerHTML=S.W.svcs.map(x=>{const s=S.washSvcs.find(v=>String(v.id)===String(x.id));const p=s?gPrice(s,cat)*x.qty:0;return`<div class="row jb" style="font-size:12px;padding:2px 0"><span>${s?.name||''} ×${x.qty}</span><span style="font-weight:600">${frs(p)}</span></div>`;}).join('');
+  el('pay-sum').innerHTML=S.W.svcs.map(x=>{
+    const s=S.washSvcs.find(v=>String(v.id)===String(x.id));
+    const p=(x.customPrice!=null?parseFloat(x.customPrice)||0:(s?gPrice(s,cat):0))*x.qty;
+    const isCustom=x.customPrice!=null;
+    return`<div class="row jb" style="font-size:12px;padding:2px 0"><span>${s?.name||''} ×${x.qty}${isCustom?` <span style="font-size:9px;color:var(--amber);font-weight:700">✏custom</span>`:''}</span><span style="font-weight:600">${frs(p)}</span></div>`;
+  }).join('');
   if(el('p-disc'))el('p-disc').value=S.W.disc||0;
   updatePMUI();calcPay();
   // Show loyalty redemption
@@ -5101,6 +5158,10 @@ function openSvcM(id=null){
     <div class="fg"><label>Service Type</label><select id="sv-c">${cats.map(c=>`<option value="${c}" ${s?.cat===c?'selected':''}>${c.charAt(0).toUpperCase()+c.slice(1)}</option>`).join('')}</select></div>
     <div class="g2" style="gap:8px">
       <div class="fg"><label>Base Price ₹ (Sedan reference)</label><input type="number" id="sv-p" value="${s?.basePrice||''}"><div style="font-size:10px;color:var(--ink3);margin-top:3px">Other categories auto-calculate from this</div></div>
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid ${s?.is_flexible||s?.flexible?'var(--amber)':'var(--line2)'};border-radius:var(--r2);margin-top:8px;cursor:pointer" onclick="this.querySelector('input').click()">
+          <input type="checkbox" id="sv-flex" ${s?.is_flexible||s?.flexible?'checked':''} style="width:16px;height:16px;accent-color:var(--amber)" onclick="event.stopPropagation()">
+          <div><div style="font-size:12px;font-weight:800">✏ Flexible Price</div><div style="font-size:10px;color:var(--ink3)">Staff can enter any price during vehicle entry</div></div>
+        </div>
       <div class="fg"><label>Duration (min)</label><input type="number" id="sv-d" value="${s?.dur||''}"></div>
     </div>
     <div style="background:var(--blt);border-radius:var(--r);padding:9px 11px;font-size:11px;color:var(--blue);margin-bottom:12px">After saving, go to <strong>Service Pricing</strong> or click <strong>💰 Set Pricing</strong> to define per-category prices.</div>
@@ -6508,11 +6569,13 @@ window.completeEntry = async function() {
 
     const svcDetails=(S.W.svcs||[]).map(x=>{
       const svc=S.washSvcs.find(s=>String(s.id)===String(x.id));
-      const price=svc?gPrice(svc,S.W.vcat||'Sedan'):0;
+      // Use custom price if set, otherwise use standard price
+      const price=x.customPrice!=null?parseFloat(x.customPrice)||0:(svc?gPrice(svc,S.W.vcat||'Sedan'):0);
       return{service_id:isUUID(svc?.id)?svc.id:null,
         service_name:svc?.name||svc?.service_name||'',
         name:svc?.name||svc?.service_name||'',
-        price,qty:x.qty||1};
+        price,qty:x.qty||1,
+        is_custom_price:x.customPrice!=null};
     }).filter(s=>s.service_name);
 
     const sub   = svcDetails.reduce((a,s)=>a+s.price,0);
@@ -7890,6 +7953,7 @@ window.saveSvc = async function(id) {
     category:     el('sv-c')?.value || 'basic',
     base_price:   parseFloat(el('sv-p')?.value) || 0,
     duration_min: parseInt(el('sv-d')?.value)   || 30,
+    is_flexible:  el('sv-flex')?.checked || false,
     active:       true
   };
   const btn = event?.target; if (btn) btn.disabled = true;
