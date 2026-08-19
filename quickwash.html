@@ -1628,23 +1628,25 @@ const VEHICLE_TYPES=[
 ];
 // All vehicle categories flat list (for pricing matrix)
 const ALL_CATS=[
-  {type:'2w',typeLabel:'2 Wheeler',cat:'Scooter'},
-  {type:'2w',typeLabel:'2 Wheeler',cat:'Motorcycle'},
-  {type:'3w',typeLabel:'3 Wheeler',cat:'Auto Rickshaw'},
-  {type:'4w',typeLabel:'4 Wheeler',cat:'Sedan'},
-  {type:'4w',typeLabel:'4 Wheeler',cat:'Hatchback'},
-  {type:'4w',typeLabel:'4 Wheeler',cat:'SUV'},
-  {type:'4w',typeLabel:'4 Wheeler',cat:'Coupe'},
-  {type:'4w',typeLabel:'4 Wheeler',cat:'Pickup'},
-  {type:'4w',typeLabel:'4 Wheeler',cat:'Luxury'},
-  {type:'truck',typeLabel:'Truck',cat:'Light Truck'},
-  {type:'truck',typeLabel:'Truck',cat:'Heavy Truck'},
-  {type:'bus',typeLabel:'Bus',cat:'Standard Bus'},
-  {type:'bus',typeLabel:'Bus',cat:'Minibus'},
-  {type:'van',typeLabel:'Van',cat:'Van'},
-  {type:'van',typeLabel:'Van',cat:'Minivan'},
-  {type:'other',typeLabel:'Other',cat:'Other'},
+  {type:'2w',  typeLabel:'2 Wheeler', cat:'Scooter',       enabled:true},
+  {type:'2w',  typeLabel:'2 Wheeler', cat:'Motorcycle',    enabled:true},
+  {type:'3w',  typeLabel:'3 Wheeler', cat:'Auto Rickshaw', enabled:true},
+  {type:'4w',  typeLabel:'4 Wheeler', cat:'Sedan',         enabled:true},
+  {type:'4w',  typeLabel:'4 Wheeler', cat:'Hatchback',     enabled:true},
+  {type:'4w',  typeLabel:'4 Wheeler', cat:'SUV',           enabled:true},
+  {type:'4w',  typeLabel:'4 Wheeler', cat:'Coupe',         enabled:false},
+  {type:'4w',  typeLabel:'4 Wheeler', cat:'Pickup',        enabled:true},
+  {type:'4w',  typeLabel:'4 Wheeler', cat:'Luxury',        enabled:true},
+  {type:'truck',typeLabel:'Truck',    cat:'Light Truck',   enabled:true},
+  {type:'truck',typeLabel:'Truck',    cat:'Heavy Truck',   enabled:false},
+  {type:'bus', typeLabel:'Bus',       cat:'Standard Bus',  enabled:false},
+  {type:'bus', typeLabel:'Bus',       cat:'Minibus',       enabled:false},
+  {type:'van', typeLabel:'Van',       cat:'Van',           enabled:true},
+  {type:'van', typeLabel:'Van',       cat:'Minivan',       enabled:true},
+  {type:'other',typeLabel:'Other',    cat:'Other',         enabled:true},
 ];
+// Helper: get only enabled categories
+function getEnabledCats(){ return ALL_CATS.filter(c=>c.enabled!==false); }
 const CAT_MUL={'Scooter':.6,'Motorcycle':.7,'Auto Rickshaw':.7,'Sedan':1,'Hatchback':.9,'Coupe':1,'SUV':1.3,'Luxury':1.6,'Pickup':1.3,'Light Truck':1.7,'Heavy Truck':2,'Standard Bus':2.2,'Minibus':1.7,'Van':1.4,'Minivan':1.2,'Other':1};
 const LOG_STATUSES=['waiting','received','washing','interior','detailing','qc','ready','delivered'];
 const LOG_LABELS={waiting:'Waiting',received:'Received',washing:'Washing',interior:'Interior',detailing:'Detailing',qc:'QC Check',ready:'Ready ✓',delivered:'Delivered',cancelled:'Cancelled'};
@@ -3552,6 +3554,36 @@ async function resendInspectionWA(inspId){
   await sendInspectionWhatsApp(insp,{damagePoints:dp,noDamage:insp.no_damage,notes:insp.notes},insp.plate);
 }
 
+// ── Vehicle Category Toggle ──────────────────────────────────
+function toggleCat(catName, enabled){
+  const cat=ALL_CATS.find(c=>c.cat===catName);
+  if(cat) cat.enabled=enabled;
+}
+async function saveCatSettings(){
+  // Save enabled categories to app_config
+  const enabledCats=ALL_CATS.filter(c=>c.enabled!==false).map(c=>c.cat);
+  const disabledCats=ALL_CATS.filter(c=>c.enabled===false).map(c=>c.cat);
+  try {
+    await sbQ('app_config').upsert({key:'disabled_cats',value:JSON.stringify(disabledCats)},{onConflict:'key'});
+    toast('Category settings saved ✓','ok');
+    renderAdm();
+  } catch(e){
+    // Save locally
+    localStorage.setItem('qw_disabled_cats',JSON.stringify(disabledCats));
+    toast('Saved locally ✓','ok');
+  }
+}
+function loadCatSettings(){
+  // Load disabled cats from config
+  const saved=CFG._disabledCats;
+  if(saved&&Array.isArray(saved)){
+    saved.forEach(catName=>{
+      const cat=ALL_CATS.find(c=>c.cat===catName);
+      if(cat) cat.enabled=false;
+    });
+  }
+}
+
 // ── Edit history logger ──
 function logEdit(l,action){
   if(!l.editHistory)l.editHistory=[];
@@ -4773,7 +4805,41 @@ function renderAdm(){
   } else if(section==='vehicle-types'){
     c.innerHTML=`<div class="sec mb3">Vehicle Types & Categories</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">${VEHICLE_TYPES.map(vt=>`<div class="card"><div style="font-size:22px;margin-bottom:6px">${vt.icon}</div><div style="font-size:13px;font-weight:800;margin-bottom:8px">${vt.label}</div><div style="display:flex;flex-wrap:wrap;gap:4px">${vt.cats.map(cat=>`<span class="bx bgr" style="font-size:10px">${cat}</span>`).join('')}</div></div>`).join('')}</div>`;
   } else if(section==='vehicle-categories'){
-    c.innerHTML=`<div class="sec mb3">Category Multipliers <span style="font-weight:500;color:var(--ink3);font-size:11px">(used when no explicit price set)</span></div><div class="tw"><table><thead><tr><th>Type</th><th>Category</th><th>Multiplier</th><th>Example (₹100 base)</th></tr></thead><tbody>${ALL_CATS.map(row=>`<tr><td style="font-size:11px;color:var(--ink3)">${row.typeLabel}</td><td style="font-weight:700">${row.cat}</td><td><input type="number" value="${CAT_MUL[row.cat]||1}" step="0.05" min="0.1" max="10" style="width:75px;padding:4px 7px;font-size:12px" onchange="CAT_MUL['${row.cat}']=parseFloat(this.value)||1;toast('Updated','ok')"></td><td style="color:var(--blue);font-weight:700">${frs(100*(CAT_MUL[row.cat]||1))}</td></tr>`).join('')}</tbody></table></div>`;
+    const catGroups={};
+    ALL_CATS.forEach(c=>{if(!catGroups[c.typeLabel])catGroups[c.typeLabel]=[];catGroups[c.typeLabel].push(c);});
+    const typeIcons={'2 Wheeler':'🛵','3 Wheeler':'🛺','4 Wheeler':'🚗','Truck':'🚛','Bus':'🚌','Van':'🚐','Other':'🚙'};
+    const enabledCount=ALL_CATS.filter(c=>c.enabled!==false).length;
+    c.innerHTML=`<div class="row aic jb mb3">
+      <div class="sec" style="margin:0">🚗 Vehicle Categories</div>
+      <span class="bx bok">${enabledCount} enabled</span>
+    </div>
+    <div style="font-size:12px;color:var(--ink3);margin-bottom:16px">Enable or disable vehicle categories. Disabled categories won't appear during vehicle entry.</div>
+    ${Object.entries(catGroups).map(([type,cats])=>`
+      <div class="card mb3">
+        <div style="font-size:13px;font-weight:800;margin-bottom:12px">${typeIcons[type]||'🚗'} ${type}</div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${cats.map(cat=>`
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:1.5px solid ${cat.enabled!==false?'var(--green)':'var(--line2)'};border-radius:var(--r2);background:${cat.enabled!==false?'var(--glt)':''}">
+              <div>
+                <div style="font-weight:700;font-size:13px">${cat.cat}</div>
+                <div style="font-size:10px;color:var(--ink3)">Multiplier: ${CAT_MUL[cat.cat]||1}x
+                  &nbsp;|&nbsp; Price input:
+                  <input type="number" value="${CAT_MUL[cat.cat]||1}" step="0.05" min="0.1" max="10"
+                    style="width:55px;padding:2px 5px;font-size:11px;border:1px solid var(--line2);border-radius:4px"
+                    onclick="event.stopPropagation()"
+                    onchange="CAT_MUL['${cat.cat}']=parseFloat(this.value)||1">x
+                </div>
+              </div>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <span style="font-size:11px;font-weight:700;color:${cat.enabled!==false?'var(--green)':'var(--ink3)'}">${cat.enabled!==false?'Enabled':'Disabled'}</span>
+                <input type="checkbox" ${cat.enabled!==false?'checked':''}
+                  style="width:18px;height:18px;accent-color:var(--green)"
+                  onchange="toggleCat('${cat.cat}',this.checked);this.closest('div[style]').style.background=this.checked?'var(--glt)':'';this.closest('div[style]').style.border='1.5px solid '+(this.checked?'var(--green)':'var(--line2)');">
+              </label>
+            </div>`).join('')}
+        </div>
+      </div>`).join('')}
+    <button class="btn bp" onclick="saveCatSettings()">💾 Save Category Settings</button>`;
   } else if(section==='packages'){
     c.innerHTML=`<div class="row aic jb mb3"><div style="font-size:13px;font-weight:800">Packages</div><button class="btn bp bsm" onclick="openPkgM()">+ Create</button></div><div class="tw"><table><thead><tr><th>Package</th><th>Services</th><th>Price</th><th>Discount</th><th>Valid</th><th>Status</th><th></th></tr></thead><tbody>${S.packages.map(p=>`<tr><td style="font-weight:700">${p.name}</td><td style="font-size:11px">${(p.svcs||p.services||[]).map?.(s=>typeof s==='string'?s:s.name||'').join(', ')||''}</td><td style="color:var(--blue);font-weight:700">${frs(p.price)}</td><td style="color:var(--green)">${frs(p.discount)}</td><td>${p.validity}d</td><td><span class="bx ${p.active?'bok':'bgr'}">${p.active?'On':'Off'}</span></td><td><button class="btn bs bsm" onclick="openPkgM('${p.id}')">Edit</button></td></tr>`).join('')}</tbody></table></div>`;
   } else if(section==='offers'){
@@ -5187,7 +5253,7 @@ function openSvcM(id=null){
       <div class="fg"><label>Duration (min)</label><input type="number" id="sv-d" value="${s?.dur||''}"></div>
     </div>
     <div style="background:var(--blt);border-radius:var(--r);padding:9px 11px;font-size:11px;color:var(--blue);margin-bottom:12px">After saving, go to <strong>Service Pricing</strong> or click <strong>💰 Set Pricing</strong> to define per-category prices.</div>
-    <div style="display:flex;gap:8px;justify-content:flex-end">${s?`<button class="btn br2 bsm" onclick="delSvc('${s.id}');closeModal()">Delete</button>`:''}<button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveSvc(${id||'null'})">${s?'Update':'Add'}</button></div>`);
+    <div style="display:flex;gap:8px;justify-content:flex-end">${s?`<button class="btn br2 bsm" onclick="delSvc('${s.id}');closeModal()">Delete</button>`:''}<button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveSvc('${id||'null'}')">${s?'Update':'Add'}</button></div>`);
 }
 function saveSvc(id){
   const n=el('sv-n')?.value.trim(),p=parseFloat(el('sv-p')?.value),d=parseInt(el('sv-d')?.value);if(!n||!p){toast('Required','e');return;}
@@ -6325,6 +6391,13 @@ async function sbBootstrapApp() {
     });
 
     // Load WhatsApp settings from DB
+    // Load disabled vehicle categories
+    if(cfg.disabled_cats){
+      try {
+        CFG._disabledCats = JSON.parse(cfg.disabled_cats);
+        loadCatSettings();
+      } catch(e){}
+    }
     if(cfg.wa_token)     CFG.sms.waToken     = cfg.wa_token;
     if(cfg.wa_phone_id)  CFG.sms.waPhoneId   = cfg.wa_phone_id;
     if(cfg.wa_provider)  CFG.sms.waProvider  = cfg.wa_provider;
