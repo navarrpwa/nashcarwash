@@ -1695,18 +1695,23 @@ function mkDate(daysAgo,h=10){const d=new Date();d.setDate(d.getDate()-daysAgo);
 // Helper: build default per-category prices from basePrice × CAT_MUL
 function mkPrices(base){const p={};ALL_CATS.forEach(c=>{p[c.cat]=Math.round(base*(CAT_MUL[c.cat]||1));});return p;}
 const WASH_SVCS=[
-  {id:1,name:'Exterior Wash',cat:'basic',basePrice:150,dur:20,prices:null},
-  {id:2,name:'Interior Clean',cat:'basic',basePrice:200,dur:30,prices:null},
-  {id:3,name:'Full Wash',cat:'basic',basePrice:300,dur:45,prices:null},
-  {id:4,name:'Premium Wash',cat:'premium',basePrice:500,dur:60,prices:null},
-  {id:5,name:'Engine Clean',cat:'premium',basePrice:400,dur:45,prices:null},
-  {id:6,name:'Paint Polish',cat:'detailing',basePrice:800,dur:90,prices:null},
-  {id:7,name:'Full Detail',cat:'detailing',basePrice:1200,dur:120,prices:null},
-  {id:8,name:'Ceramic Coat',cat:'detailing',basePrice:3500,dur:180,prices:null},
-  {id:9,name:'Odour Removal',cat:'extra',basePrice:600,dur:40,prices:null},
-  {id:10,name:'Tyre Shine',cat:'extra',basePrice:80,dur:10,prices:null},
-  {id:11,name:'Dashboard Polish',cat:'extra',basePrice:120,dur:15,prices:null},
-  {id:12,name:'Headlight Polish',cat:'extra',basePrice:250,dur:20,prices:null},
+  // Standard fixed-price services
+  {id:1, name:'Exterior Wash',    cat:'basic',    basePrice:150, dur:20,  prices:null},
+  {id:2, name:'Interior Clean',   cat:'basic',    basePrice:200, dur:30,  prices:null},
+  {id:3, name:'Engine Clean',     cat:'premium',  basePrice:400, dur:45,  prices:null},
+  {id:4, name:'Tyre Shine',       cat:'extra',    basePrice:80,  dur:10,  prices:null},
+  {id:5, name:'Dashboard Polish', cat:'extra',    basePrice:120, dur:15,  prices:null},
+  {id:6, name:'Headlight Polish', cat:'extra',    basePrice:250, dur:20,  prices:null},
+  {id:7, name:'Odour Removal',    cat:'extra',    basePrice:600, dur:40,  prices:null},
+  // Flexible price services — staff enters price during entry
+  {id:8,  name:'Steam Wash',    cat:'premium',  basePrice:0, dur:45,  prices:null, is_flexible:true, flexible:true},
+  {id:9,  name:'Premium Wash',  cat:'premium',  basePrice:0, dur:60,  prices:null, is_flexible:true, flexible:true},
+  {id:10, name:'Ceramic Wash',  cat:'premium',  basePrice:0, dur:90,  prices:null, is_flexible:true, flexible:true},
+  {id:11, name:'Jack Wash',     cat:'premium',  basePrice:0, dur:60,  prices:null, is_flexible:true, flexible:true},
+  {id:12, name:'Undercoating',  cat:'premium',  basePrice:0, dur:120, prices:null, is_flexible:true, flexible:true},
+  {id:13, name:'Detailing',     cat:'detailing',basePrice:0, dur:180, prices:null, is_flexible:true, flexible:true},
+  {id:14, name:'Quick Wash',    cat:'basic',    basePrice:0, dur:20,  prices:null, is_flexible:true, flexible:true},
+  {id:15, name:'Full Wash',     cat:'basic',    basePrice:0, dur:60,  prices:null, is_flexible:true, flexible:true},
 ];
 // Init prices from multipliers (will be populated after ALL_CATS defined)
 function initSvcPrices(){
@@ -7385,11 +7390,11 @@ async function executeQueuedOp(item) {
   // If tables don't exist yet, fail gracefully
   if (!sbGetToken()) throw new Error('Not authenticated');
   switch(fn) {
-    case 'createServiceEntry': return await QB.createServiceEntry(args[0]);
-    case 'advanceLogStatus':   return await QB.advanceLogStatus(args[0], args[1]);
-    case 'recordPayment':      return await QB.recordPayment(args[0]);
+    case 'createServiceEntry': console.log('[Queue] createServiceEntry handled by override'); return;
+    case 'advanceLogStatus':   return await window.slAdv(args[0], args[1]);
+    case 'recordPayment':      console.log('[Queue] recordPayment handled by override'); return;
     case 'saveCustomer':       return await QB.saveCustomer(args[0]);
-    case 'editServiceLog':     return await QB.editServiceLog(args[0], args[1], args[2]);
+    case 'editServiceLog':     console.log('[Queue] editServiceLog handled by override'); return;
     case 'saveProduct':        return await QB.saveProduct(args[0]);
     case 'saveSupplier':       return await QB.saveSupplier(args[0]);
     case 'saveStaff':          return await QB.saveStaff(args[0]);
