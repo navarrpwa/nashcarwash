@@ -2583,28 +2583,34 @@ function renderSvcSel(){
     const isFlexible=s.is_flexible||s.flexible||false;
     const customPrice=sel?.customPrice;
     const displayPrice=isFlexible&&sel&&customPrice!=null?customPrice:price;
-    return`<div class="ss-card ${sel?'sel':''}" onclick="toggleSvc('${s.id}')">
+    return`<div class="ss-card ${sel?'sel':''}" onclick="toggleSvc('${s.id}')" style="position:relative">
       <div class="ss-name">${s.name}</div>
       <div class="ss-price" style="${isFlexible?'color:var(--amber)':''}">
-        ${isFlexible?'✏ Custom Price':''}${!isFlexible||!sel?frs(displayPrice):''}
+        ${!isFlexible?frs(displayPrice):(sel?frs(customPrice!=null?customPrice:price):'✏ Custom')}
       </div>
       <div class="ss-cat">${s.cat||s.category||''} • ${s.dur||s.duration_min||30}min</div>
-      ${isFlexible?`<div style="font-size:9px;color:var(--amber);font-weight:700">Flexible Price</div>`:''}
+      ${isFlexible&&!sel?`<div style="font-size:9px;color:var(--amber);font-weight:700;margin-top:2px">Flexible Price — tap to select</div>`:''}
       ${sel?`
-        ${isFlexible?`<div onclick="event.stopPropagation()" style="margin-top:8px">
-          <div style="font-size:10px;color:var(--ink3);margin-bottom:3px">Enter price (₹)</div>
-          <input type="number" min="0" step="10"
+        ${isFlexible?`<div style="margin-top:10px;position:relative" ontouchstart="event.stopPropagation()" onclick="event.stopPropagation()">
+          <div style="font-size:10px;color:var(--amber);font-weight:700;margin-bottom:4px">💰 Enter Price (₹)</div>
+          <input type="number" inputmode="numeric" min="0" step="10"
+            id="flex-inp-${s.id}"
             value="${customPrice!=null?customPrice:price}"
-            placeholder="Enter amount"
-            style="width:100%;padding:7px 8px;border:2px solid var(--amber);border-radius:7px;font-size:15px;font-weight:800;color:var(--ink);text-align:center"
-            oninput="setSvcCustomPrice('${s.id}',this.value)"
-            onclick="event.stopPropagation()">
+            placeholder="0"
+            style="width:100%;padding:10px 8px;border:2.5px solid var(--amber);border-radius:8px;font-size:18px;font-weight:900;color:var(--ink);text-align:center;background:#fffbeb;-webkit-user-select:text;user-select:text"
+            ontouchstart="event.stopPropagation()"
+            onclick="event.stopPropagation()"
+            onfocus="event.stopPropagation()"
+            onchange="setSvcCustomPrice('${s.id}',this.value)"
+            oninput="setSvcCustomPrice('${s.id}',this.value)">
+          <div style="font-size:11px;color:var(--green);font-weight:800;text-align:center;margin-top:4px">
+            Total: ${frs((customPrice!=null?customPrice:price)*(sel.qty||1))}
+          </div>
         </div>`:''}
-        <div style="display:flex;align-items:center;gap:6px;margin-top:8px" onclick="event.stopPropagation()">
-          <button class="qb" onclick="svcQ('${s.id}',-1)" style="width:24px;height:24px;border-radius:5px;border:1.5px solid var(--line2);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">−</button>
-          <span style="font-size:13px;font-weight:800">${sel.qty}</span>
-          <button class="qb" onclick="svcQ('${s.id}',1)" style="width:24px;height:24px;border-radius:5px;border:1.5px solid var(--line2);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>
-          ${isFlexible&&sel?`<span style="font-size:12px;font-weight:800;color:var(--green);margin-left:4px">${frs((customPrice!=null?customPrice:price)*sel.qty)}</span>`:''}
+        <div style="display:flex;align-items:center;gap:6px;margin-top:8px" ontouchstart="event.stopPropagation()" onclick="event.stopPropagation()">
+          <button class="qb" ontouchstart="event.stopPropagation()" onclick="event.stopPropagation();svcQ('${s.id}',-1)" style="width:28px;height:28px;border-radius:6px;border:1.5px solid var(--line2);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px">−</button>
+          <span style="font-size:13px;font-weight:800;min-width:20px;text-align:center">${sel.qty}</span>
+          <button class="qb" ontouchstart="event.stopPropagation()" onclick="event.stopPropagation();svcQ('${s.id}',1)" style="width:28px;height:28px;border-radius:6px;border:1.5px solid var(--line2);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px">+</button>
         </div>
       `:''}
     </div>`;
@@ -2641,8 +2647,19 @@ function toggleSvc(id){
 }
 function setSvcCustomPrice(id,val){
   const s=S.W.svcs.find(x=>String(x.id)===String(id));
-  if(s) s.customPrice=parseFloat(val)||0;
-  updateSvcStrip(); // update total without full re-render (avoids losing focus)
+  if(!s) return;
+  s.customPrice=parseFloat(val)||0;
+  // Update just the total display without full re-render (preserves input focus)
+  updateSvcStrip();
+  // Update the total display inside the card
+  const inp=document.getElementById('flex-inp-'+id);
+  if(inp&&inp.parentNode){
+    const totalEl=inp.parentNode.querySelector('div[style*="Total:"]');
+    if(totalEl){
+      const svc=S.washSvcs.find(v=>String(v.id)===String(id));
+      totalEl.textContent='Total: '+frs((s.customPrice)*(s.qty||1));
+    }
+  }
 }
 function svcQ(id,d){const s=S.W.svcs.find(x=>String(x.id)===String(id));if(!s)return;s.qty+=d;if(s.qty<=0)S.W.svcs=S.W.svcs.filter(x=>String(x.id)!==String(id));renderSvcSel();}
 function applyPkg(pkgId){
