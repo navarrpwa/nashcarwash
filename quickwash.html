@@ -6373,6 +6373,8 @@ async function sbBootstrapApp() {
       base_price: parseFloat(svc.base_price||svc.basePrice||0),
       dur: svc.duration_min||svc.dur||30,
       duration_min: svc.duration_min||svc.dur||30,
+      is_flexible: svc.is_flexible === true || svc.is_flexible === 'true',
+      flexible:    svc.is_flexible === true || svc.is_flexible === 'true',
       prices: Object.fromEntries(
         (svc.wash_service_prices || [])
           .filter(p=>p.vehicle_categories?.name)
