@@ -3071,98 +3071,94 @@ function slAdv(id,status){
 
 // ── Editable Service Log modal ──
 function openSlEdit(id){
-  const l=S.sl.find(x=>x.id===id);if(!l)return;
+  const l=S.sl.find(x=>x.id===id||String(x.id)===String(id));
+  if(!l) return;
+  window._slEditId=id;
   const cat=l.vcat||'Sedan';
 
-  // Build service checkboxes with flexible price input
   const svcChecks=S.washSvcs.map(s=>{
     const checked=l.svcs.includes(s.name);
     const isFlexible=s.is_flexible||s.flexible||false;
-    // Find existing custom price from svcDetails
     const existDetail=l.svcDetails?.find(d=>d.service_name===s.name||d.name===s.name);
     const existPrice=existDetail?.price!=null?existDetail.price:gPrice(s,cat);
-    return`<div style="border:1px solid var(--line);border-radius:var(--r);margin-bottom:5px;background:${checked?'var(--blt)':'#fff'}">
-      <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px;cursor:pointer">
-        <div style="display:flex;align-items:center;gap:7px">
+    const inputId='fei-'+s.name.replace(/[^A-Za-z0-9]/g,'_');
+    return`<div style="border:1.5px solid ${checked?'var(--blue)':'var(--line)'};border-radius:var(--r);margin-bottom:6px;background:${checked?'var(--blt)':'#fff'}">
+      <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px;cursor:pointer">
+        <div style="display:flex;align-items:center;gap:8px">
           <input type="checkbox" name="sl-svc" value="${s.name}" ${checked?'checked':''}
-            style="width:auto;accent-color:var(--blue)" onchange="slEditRecalc()">
-          <span style="font-size:12px;font-weight:600">${s.name}${isFlexible?` <span style="font-size:9px;color:var(--amber);font-weight:700">✏</span>`:''}
-          </span>
+            style="width:16px;height:16px;accent-color:var(--blue)"
+            onchange="var d=document.getElementById('fep_${inputId}');if(d)d.style.display=this.checked?'block':'none';slEditRecalc()">
+          <span style="font-size:13px;font-weight:600">${s.name}</span>
+          ${isFlexible?`<span style="font-size:9px;color:var(--amber);font-weight:800;background:#fef3c7;padding:2px 5px;border-radius:4px">✏ CUSTOM</span>`:''}
         </div>
-        <span style="font-size:12px;font-weight:700;color:var(--blue)">${isFlexible?'Custom':frs(gPrice(s,cat))}</span>
+        ${!isFlexible?`<span style="font-size:12px;font-weight:700;color:var(--blue)">${frs(gPrice(s,cat))}</span>`:''}
       </label>
-      ${isFlexible&&checked?`<div style="padding:0 8px 8px" onclick="event.stopPropagation()">
-        <input type="number" id="flex-edit-${s.name.replace(/\s/g,'-')}" value="${existPrice}"
-          placeholder="Enter price" min="0" step="10" inputmode="numeric"
-          style="width:100%;padding:7px;border:2px solid var(--amber);border-radius:6px;font-size:15px;font-weight:800;text-align:center"
+      ${isFlexible?`<div id="fep_${inputId}" style="padding:0 10px 10px;display:${checked?'block':'none'}">
+        <input type="number" id="${inputId}" value="${existPrice}"
+          placeholder="Enter price ₹" min="0" step="10" inputmode="numeric"
+          style="width:100%;padding:10px;border:2px solid var(--amber);border-radius:7px;font-size:18px;font-weight:900;text-align:center;background:#fffbeb"
+          ontouchstart="event.stopPropagation()" onclick="event.stopPropagation()"
           oninput="slEditRecalc()">
       </div>`:''}
     </div>`;
   }).join('');
 
   const staffOpts=S.staff.map(s=>`<option value="${s.name}" ${l.staff===s.name?'selected':''}>${s.name}</option>`).join('');
-  const statOpts=LOG_STATUSES.filter(s=>s!=='delivered').map(s=>`<option value="${s}" ${l.status===s?'selected':''}>${LOG_LABELS[s]}</option>`).join('');
-  const histHTML=l.editHistory&&l.editHistory.length?`<div class="sec" style="font-size:11px;margin:12px 0 6px">Edit History</div><div style="max-height:80px;overflow-y:auto;border:1px solid var(--line);border-radius:var(--r);padding:6px">${l.editHistory.slice().reverse().map(h=>`<div style="font-size:10px;color:var(--ink3);padding:2px 0"><strong>${h.by}</strong> — ${h.action} — ${fdt(h.at)}</div>`).join('')}</div>`:'';
+  const STATS=['waiting','received','washing','interior','detailing','qc','ready'];
+  const SLBL={waiting:'Waiting',received:'Received',washing:'Washing',interior:'Interior',detailing:'Detailing',qc:'QC Check',ready:'Ready'};
+  const statOpts=STATS.map(s=>`<option value="${s}" ${l.status===s?'selected':''}>${SLBL[s]||s}</option>`).join('');
 
   openModal(`${mhd('✏ Edit — '+l.plate)}
-    <div class="sec" style="font-size:12px;margin-bottom:8px">Services <span style="color:var(--ink3);font-weight:500">(${cat})</span></div>
-    <div style="max-height:240px;overflow-y:auto">${svcChecks}</div>
+    <div style="font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:8px">Services (${cat})</div>
+    <div style="max-height:260px;overflow-y:auto">${svcChecks}</div>
     <div style="background:var(--blt);border-radius:var(--r);padding:8px 12px;margin:10px 0;display:flex;justify-content:space-between">
-      <span style="font-size:11px;color:var(--ink2)">Services Subtotal</span>
+      <span style="font-size:11px">Subtotal</span>
       <span style="font-size:15px;font-weight:800;color:var(--blue)" id="se-sub">₹0</span>
     </div>
     <div class="g2" style="gap:8px">
-      <div class="fg"><label>Discount (₹)</label><input type="number" id="se-disc" value="${l.disc||0}" min="0" max="999999" oninput="slEditRecalc()"></div>
+      <div class="fg"><label>Discount (₹)</label><input type="number" id="se-disc" value="${l.disc||0}" min="0" oninput="slEditRecalc()"></div>
       <div class="fg"><label>Est. Time (min)</label><input type="number" id="se-est" value="${l.estimatedMins||0}" min="0"></div>
     </div>
     <div class="g2" style="gap:8px">
       <div class="fg"><label>Staff</label><select id="se-staff"><option value="">— Unassigned —</option>${staffOpts}</select></div>
       <div class="fg"><label>Status</label><select id="se-status">${statOpts}</select></div>
     </div>
-    <div class="fg"><label>Apply GST (${CFG.gstRate}%)</label><select id="se-tax" onchange="slEditRecalc()"><option value="0" ${!l.tax?'selected':''}>No Tax</option><option value="1" ${l.tax>0?'selected':''}>Apply ${CFG.gstRate}% GST</option></select></div>
+    <div class="fg"><label>Tax</label><select id="se-tax" onchange="slEditRecalc()"><option value="0" ${!l.tax?'selected':''}>No Tax</option><option value="1" ${l.tax>0?'selected':''}>Apply ${CFG.gstRate}% GST</option></select></div>
     <div class="fg"><label>Notes</label><textarea id="se-notes" rows="2" style="resize:none">${l.notes||''}</textarea></div>
     <div style="background:var(--bg);border-radius:var(--r2);padding:10px 12px;margin-bottom:12px">
-      <div class="row jb" style="font-size:12px;color:var(--ink3);margin-bottom:4px"><span>Subtotal</span><span id="se-sub2">₹0</span></div>
-      <div class="row jb" style="font-size:12px;color:var(--amber);margin-bottom:4px"><span>Discount</span><span id="se-disc2">-₹0</span></div>
-      <div class="row jb" style="font-size:12px;color:var(--ink3);margin-bottom:4px"><span>Tax</span><span id="se-tax2">₹0</span></div>
-      <div class="row jb" style="font-size:16px;font-weight:800"><span>Total</span><span id="se-tot" style="color:var(--blue)">₹0</span></div>
+      <div class="row jb" style="font-size:12px;color:var(--ink3);margin-bottom:3px"><span>Subtotal</span><span id="se-sub2">₹0</span></div>
+      <div class="row jb" style="font-size:12px;color:var(--amber);margin-bottom:3px"><span>Discount</span><span id="se-disc2">-₹0</span></div>
+      <div class="row jb" style="font-size:12px;color:var(--ink3);margin-bottom:3px"><span>Tax</span><span id="se-tax2">₹0</span></div>
+      <div class="row jb" style="font-size:16px;font-weight:900"><span>Total</span><span id="se-tot" style="color:var(--blue)">₹0</span></div>
     </div>
-    ${histHTML}
     <div style="display:flex;gap:8px;justify-content:space-between">
       <button class="btn br2 bsm" onclick="if(confirm('Cancel this job?')){closeModal();slDel('${id}');}">🗑 Cancel</button>
       <div style="display:flex;gap:8px">
         <button class="btn bs" onclick="closeModal()">Close</button>
         <button class="btn bp" onclick="saveSlEdit('${id}')">💾 Save</button>
       </div>
-    </div>
-    </div>`,600);
+    </div></div>`,620);
   setTimeout(()=>slEditRecalc(),50);
 }
 
+
 function slEditRecalc(){
-  const l=S.sl.find(x=>x.id===el('se-notes')?.closest?.('[data-lid]')?.dataset?.lid) ||
-    S.sl.find(x=>!['delivered','cancelled'].includes(x.status)); // fallback
+  const l=S.sl.find(x=>x.id===window._slEditId||String(x.id)===String(window._slEditId));
   const cat=l?.vcat||'Sedan';
   const checked=[...document.querySelectorAll('input[name="sl-svc"]:checked')].map(x=>x.value);
-
-  // Calculate subtotal — use flexible price input if available
   const sub=checked.reduce((a,name)=>{
     const s=S.washSvcs.find(x=>x.name===name);
     if(!s) return a;
-    const isFlexible=s.is_flexible||s.flexible||false;
-    if(isFlexible){
-      const inp=document.getElementById('flex-edit-'+name.replace(/\s/g,'-'));
+    if(s.is_flexible||s.flexible){
+      const inp=document.getElementById('fei_'+name.replace(/[^A-Za-z0-9]/g,'_'));
       return a+(parseFloat(inp?.value)||0);
     }
     return a+gPrice(s,cat);
   },0);
-
-  const disc=Math.min(parseFloat(el('se-disc')?.value)||0, sub); // discount can't exceed subtotal
+  const disc=Math.min(parseFloat(el('se-disc')?.value)||0, sub);
   const afterDisc=Math.max(0,sub-disc);
-  const useTax=el('se-tax')?.value==='1';
-  const tax=useTax?Math.round(afterDisc*CFG.gstRate/100):0;
+  const tax=el('se-tax')?.value==='1'?Math.round(afterDisc*CFG.gstRate/100):0;
   const tot=afterDisc+tax;
-
   if(el('se-sub'))  el('se-sub').textContent=frs(sub);
   if(el('se-sub2')) el('se-sub2').textContent=frs(sub);
   if(el('se-disc2'))el('se-disc2').textContent='-'+frs(disc);
@@ -7762,7 +7758,7 @@ window.saveSlEdit = async function(id) {
     if(!s) return a;
     const isFlexible=s.is_flexible||s.flexible||false;
     if(isFlexible){
-      const inp=document.getElementById('flex-edit-'+name.replace(/\s/g,'-'));
+      const inp=document.getElementById('fei_'+name.replace(/[^A-Za-z0-9]/g,'_'));
       return a+(parseFloat(inp?.value)||0);
     }
     return a+gPrice(s,cat);
@@ -7804,18 +7800,16 @@ window.saveSlEdit = async function(id) {
       }).eq('id', dbId);
 
       // Rewrite service line items
-      const svcs = checked.map(name=>{
-        const s=S.washSvcs.find(x=>x.name===name||x.service_name===name);
-        const isFlexible=s?.is_flexible||s?.flexible||false;
-        let price=s?gPrice(s,cat):0;
-        if(isFlexible){
-          const inp=document.getElementById('flex-edit-'+name.replace(/\s/g,'-'));
-          price=parseFloat(inp?.value)||0;
-        }
-        return { log_id:dbId,
-          service_id: isUUID(s?.id)?s.id:null,
-          service_name: name, price, qty: 1 };
-      });
+        const svcs = checked.map(name=>{
+          const s=S.washSvcs.find(x=>x.name===name||x.service_name===name);
+          const isFlexible=s?.is_flexible||s?.flexible||false;
+          let price=s?gPrice(s,cat):0;
+          if(isFlexible){
+            const inp=document.getElementById('fei_'+name.replace(/[^A-Za-z0-9]/g,'_'));
+            price=parseFloat(inp?.value)||0;
+          }
+          return { log_id:dbId, service_id: isUUID(s?.id)?s.id:null, service_name: name, price, qty: 1 };
+        });
       await sbQ('service_log_services').delete().eq('log_id',dbId);
       if(svcs.length) await sbQ('service_log_services').insert(svcs);
 
