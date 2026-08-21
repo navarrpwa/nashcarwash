@@ -3818,25 +3818,55 @@ function searchPC(){const q=el('pos-cq')?.value.toLowerCase()||'';const r=el('po
 function selPC(id){const c=S.customers.find(x=>x.id===id);if(!c)return;S.posCust=c;el('pos-cq').value='';el('pos-cr').style.display='none';el('pos-cs').textContent=c.name+' — '+c.phone;el('pos-cs').style.display='block';if(CFG.loyaltyEnabled&&c.points>0){el('pos-loyalty').style.display='block';el('pos-loyalty').innerHTML=`💜 ${c.name} has <strong>${c.points} pts</strong> (${frs(c.points*CFG.pointValue)} value)`;}}
 function openQAC(){openModal(`${mhd('+New Customer')}<div class="fg"><label>Name *</label><input type="text" id="qac-n"></div><div class="fg"><label>Phone * <span style="font-size:10px;color:var(--ink3)">(10 digits)</span></label><input type="tel" id="qac-p" maxlength="13" placeholder="9876543210" oninput="this.value=this.value.replace(/[^0-9+]/g,'')"></div><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveQAC()">Add</button></div>`);}
 async function saveQAC(){
-  const n=el('qac-n')?.value.trim(), p=el('qac-p')?.value.trim();
-  if(!n||!p){toast('Name and phone required','e');return;}
+  const n=el('qac-n')?.value.trim(), p=el('qac-p')?.value?.replace(/[^0-9]/g,'');
+  if(!n){toast('Name required','e');return;}
+
+  // Check if customer with same phone already exists
+  if(p){
+    const existing=S.customers.find(c=>c.phone===p||c.phone==='+91'+p);
+    if(existing){
+      closeModal();
+      if(typeof selPC==='function') selPC(existing.id);
+      toast('Customer found: '+existing.name+' ✓','ok');
+      return;
+    }
+  }
+
+  // Also check in DB
+  if(p){
+    try {
+      const {data:found}=await sbQ('customers').select('id,name,phone').eq('phone',p).limit(1);
+      if(found&&found.length){
+        const fc=found[0];
+        // Add to local if not there
+        if(!S.customers.find(c=>c.id===fc.id)){
+          S.customers.push({id:fc.id,name:fc.name,phone:fc.phone,email:'',
+            plates:[],visits:0,totalSpent:0,points:0,notes:'',loyaltyHistory:[]});
+        }
+        closeModal();
+        if(typeof selPC==='function') selPC(fc.id);
+        toast('Existing customer: '+fc.name+' ✓','ok');
+        return;
+      }
+    } catch(e){}
+  }
+
+  // Truly new customer
   const localId='tmp_'+Date.now();
   const c={id:localId,name:n,phone:p,email:'',plates:[],visits:0,totalSpent:0,
-            lastVisit:new Date().toISOString(),points:0,notes:'',loyaltyHistory:[]};
+    lastVisit:new Date().toISOString(),points:0,notes:'',loyaltyHistory:[]};
   S.customers.push(c);
   closeModal();
   if(typeof selPC==='function') selPC(localId);
   toast('Customer added ✓','ok');
   try {
-    const saved=await dbInsert('customers',{name:n,phone:p,email:''});
+    const saved=await dbInsert('customers',{name:n,phone:p||null,email:''});
     c.id=saved.id;
     const idx=S.customers.findIndex(x=>x.id===localId);
     if(idx!==-1) S.customers[idx].id=saved.id;
     if(typeof selPC==='function') selPC(saved.id);
-    console.log('[QuickWash] ✅ POS customer saved to DB:',saved.id);
-  } catch(e) {
-    console.warn('[QuickWash] POS customer DB save failed:',e?.message);
-    toast('Customer saved locally — check DB connection','w');
+  } catch(e){
+    console.warn('[QuickAdd] Customer DB save:',e?.message);
   }
 }
 async function poscheckout(){
@@ -4015,45 +4045,81 @@ function openCM(id=null){
     <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn bs" onclick="closeModal()">Cancel</button><button class="btn bp" onclick="saveCM('${id||'null'}')">${c?'Update':'Add'}</button></div>`);
 }
 async function saveCM(id){
-  const n=el('cm-n')?.value.trim(), p=el('cm-p')?.value.trim();
-  if(!n||!p){toast('Name and phone required','e');return;}
+  const n=el('cm-n')?.value.trim();
+  if(!n){toast('Name required','e');return;}
   let phone_raw=el('cm-p')?.value?.replace(/[^0-9+]/g,'')||'';
-  // Normalize: store as 10 digits locally, add country code when sending WhatsApp
-  if(phone_raw.startsWith('+91') && phone_raw.length===13) phone_raw=phone_raw.slice(3);
-  if(phone_raw.startsWith('91') && phone_raw.length===12) phone_raw=phone_raw.slice(2);
+  if(phone_raw.startsWith('+91')&&phone_raw.length===13) phone_raw=phone_raw.slice(3);
+  if(phone_raw.startsWith('91')&&phone_raw.length===12) phone_raw=phone_raw.slice(2);
+  const p=phone_raw;
   const email=el('cm-e')?.value||'';
   const notes=el('cm-nt')?.value||'';
   const pls=(el('cm-pl')?.value||'').split(',').map(x=>x.trim().toUpperCase()).filter(Boolean);
   const btn=document.querySelector('.modal .btn.bp'); if(btn)btn.disabled=true;
+
   try {
     if(isUUID(id)){
-      // Edit existing
+      // ── Edit existing customer ──
       const {error}=await sbQ('customers').update({
-        name:n,phone:p,email,notes,updated_at:new Date().toISOString()
+        name:n,phone:p||null,email,notes,updated_at:new Date().toISOString()
       }).eq('id',id);
       if(error) throw error;
       const c=S.customers.find(x=>x.id===id);
-      if(c) Object.assign(c,{name:n,phone:p,email,notes,plates:pls});
-      // Sync plates: delete old, insert new
-      await sbQ('customer_plates').delete().eq('customer_id',id);
+      if(c) Object.assign(c,{name:n,phone:p,email,notes});
+      // Add new plates without removing existing ones
       for(const pl of pls){
-        try{await dbInsert('customer_plates',{customer_id:id,plate:pl});}catch(e){}
+        if(!c.plates.includes(pl)){
+          try{
+            await sbQ('customer_plates').insert({customer_id:id,plate:pl});
+            c.plates.push(pl);
+          }catch(e){}
+        }
       }
       closeModal();renderCusts();toast('Customer updated ✓','ok');
+
     } else {
-      // New customer
-      const saved=await dbInsert('customers',{name:n,phone:p,email,notes});
-      // Insert plates
-      for(const pl of pls){
-        try{await dbInsert('customer_plates',{customer_id:saved.id,plate:pl});}catch(e){}
+      // ── New customer — check if phone already exists ──
+      let existingId = null;
+      if(p){
+        const {data:found}=await sbQ('customers').select('id,name,plates:customer_plates(plate)').eq('phone',p).limit(1);
+        if(found&&found.length){
+          existingId=found[0].id;
+        }
       }
-      S.customers.push({id:saved.id,name:saved.name,phone:saved.phone,email:saved.email||'',
-        plates:pls,visits:0,totalSpent:0,lastVisit:new Date().toISOString(),
-        points:0,notes:notes,loyaltyHistory:[]});
-      closeModal();renderCusts();toast('Customer added ✓','ok');
+
+      if(existingId){
+        // Customer already exists — just add new plates
+        const existC=S.customers.find(x=>x.id===existingId);
+        const addedPlates=[];
+        for(const pl of pls){
+          const alreadyHas=existC?.plates?.includes(pl);
+          if(!alreadyHas){
+            try{
+              await sbQ('customer_plates').insert({customer_id:existingId,plate:pl});
+              if(existC) existC.plates.push(pl);
+              addedPlates.push(pl);
+            }catch(e){}
+          }
+        }
+        closeModal();renderCusts();
+        const msg=addedPlates.length
+          ?`Customer already exists — added plate(s): ${addedPlates.join(', ')} ✓`
+          :'Customer already exists — no new plates to add';
+        toast(msg,'ok');
+      } else {
+        // Truly new customer
+        const saved=await dbInsert('customers',{name:n,phone:p||null,email,notes,
+          active:true,visits:0,total_spent:0,points:0});
+        for(const pl of pls){
+          try{await dbInsert('customer_plates',{customer_id:saved.id,plate:pl});}catch(e){}
+        }
+        S.customers.push({id:saved.id,name:saved.name,phone:saved.phone,
+          email:saved.email||'',plates:pls,visits:0,totalSpent:0,
+          lastVisit:new Date().toISOString(),points:0,notes,loyaltyHistory:[]});
+        closeModal();renderCusts();toast('Customer added ✓','ok');
+      }
     }
-  } catch(e) {
-    toast('Failed to save customer: '+(e.message||'DB error'),'e');
+  } catch(e){
+    toast('Failed: '+(e.message||'DB error'),'e');
     if(btn)btn.disabled=false;
   }
 }
